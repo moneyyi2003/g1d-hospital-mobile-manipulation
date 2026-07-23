@@ -175,3 +175,38 @@ Isaac Streaming，应先正常停止它。
 `waiting_area`，置信度 1.00；dashboard 规划 7.376 m 路径并完成 1092 帧导航，位置误差
 0.119 m，航向误差 0.117 rad。HTTP 页面、两张地图资源和 MJPEG 流均实际读取成功。
 该结果仍属于 `stable_assisted` 高层演示，不代表 `--wheel-physics-only` 验收通过。
+
+## 6. 隔离的物体级精确停靠 demo
+
+区域地点只负责把机器人带到 Hospital 的语义区域；移动操作不能继续复用区域中心点。
+独立 demo 增加第二级目标：物体目录提供物体中心和交互面朝向，停靠层把“方块前 0.8 米”
+转换成带最终朝向的底盘位姿，并在正式 occupancy map 上检查 footprint 净空与可达性。
+
+```text
+区域 VLN -> object_id/检测位姿 -> 交互面 + standoff
+         -> SE(2) 停靠位姿 -> occupancy 验证 -> 3 cm 精确跟随 -> VLA
+```
+
+运行带头部 RGB 和第三人称 GIF 的真实 Isaac 验收：
+
+```bash
+./mobilemanibench.sh hospital-object-docking --headless --test --record-gif \
+  --command '请停到红色方块前0.8米'
+```
+
+只检查语言约束、目标位姿和路径，不启动 Isaac：
+
+```bash
+./mobilemanibench.sh hospital-object-docking --plan-only \
+  --command '请停到红色方块前0.6米'
+```
+
+配置只存在于 `hospital_vln/object_targets_demo.json`；运行输出只写入
+`outputs/hospital_object_docking/`，不会修改 `places_formal.json`、地图、6006 dashboard
+或原 Hospital 输出。当前 demo 的台座和方块是视觉/导航目标，不带刚体抓取物理；它验证
+的是 `REGION -> OBJECT -> PREGRASP_DOCK`，不是 OpenVLA 抓取成功。接真实感知时应以检测
+或跟踪得到的物体位姿替换 demo catalog 坐标，并在导航末端增加视觉伺服微调。
+
+2026-07-23 实际运行结果：目标停靠点 `(-2.500,-0.600,1.571)`，规划路径 2.657 m，
+619 帧到达；停靠点位置误差 0.030 m、朝向误差 0.050 rad，实际基座到方块中心距离
+0.809 m。该结果仍为 `stable_assisted`，纯轮地接触误差尚未达到同等精度。

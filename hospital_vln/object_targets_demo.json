@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "activation": "isolated_demo_only",
+  "frame_id": "map",
+  "objects": [
+    {
+      "id": "red_cube_demo",
+      "name": "红色方块",
+      "aliases": ["红方块", "方块", "小方块", "red cube", "cube"],
+      "position": {
+        "x": -2.5,
+        "y": 0.2,
+        "z": 1.05
+      },
+      "interaction_face_yaw": -1.5707963267948966,
+      "size_m": 0.2,
+      "source": "isolated_demo_spawn",
+      "status": "demo_only"
+    }
+  ]
+}

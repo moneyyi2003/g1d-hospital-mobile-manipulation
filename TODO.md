@@ -39,6 +39,15 @@ LingBot RGB 点云和 occupancy map 上的实时机器人轨迹，并已接入 D
   LLM 只能返回审核 `place_id`，坐标仍由地点库提供。
 - [x] 模糊指令“带我去找个能坐着等医生的地方”真实 DeepSeek + Isaac demo 成功：
   未出现地点名，解析为 `waiting_area`（置信度 1.00），1092 帧到达，位置误差 0.119 m。
+- [x] 建立隔离的候诊区多候选生成器：4 个真实 `SM_Chair_02a` 长椅实例生成 8 个候选，
+  occupancy/footprint 自动淘汰 5 个，3 个可达；当前排序选择
+  `chair_02a6_south=(-5.117,-0.878,1.571)`，输出仅在 `outputs/hospital_docking/`。
+- [x] 增加显式 `--dynamic-docking` dashboard 接口和 `hospital-docking` 构建命令；
+  默认仍为 `formal_fixed_pose`，动态模式才把验证候选交给 Isaac。
+- [x] 新增完全隔离的物体级精确停靠 demo：把“方块前 0.8 米”转换为面向物体的 SE(2)
+  位姿，并用正式 occupancy map 验证 footprint 与路径；Isaac 实测位置误差 0.030 m、
+  朝向误差 0.050 rad，实际基座—方块中心距离 0.809 m；输出仅写入
+  `outputs/hospital_object_docking/`，6006 默认 demo 未改变。
 
 ## 当前问题
 
@@ -53,8 +62,15 @@ LingBot RGB 点云和 occupancy map 上的实时机器人轨迹，并已接入 D
   明确选择，后续需决定是否统一迁移。
 - [ ] **P1：正式 Hospital 覆盖仅限前台和候诊区。** 主走廊及全院墙体 occupancy 尚未
   审核，不应开放为语言目标。
+- [ ] **P1：候诊区仍使用单一固定停靠点。** 当前
+  `waiting_area_reviewed_v1=(-5.95, 2.20, -1.571)` 已审核且 demo 稳定，但不会根据
+  多把椅子、路径长度或动态占用选择不同停靠位置。下一步必须以独立制品和显式 opt-in
+  实现多候选生成/排序，默认 `hospital-web` 不得改变。
 - [ ] **P1：移动操作尚未闭环。** G1-D 右臂、多指手、IK、接触参数和抓取成功判据仍需
   单独配置，不能复用官方 G1 平行夹爪动作空间。
+- [ ] **P1：物体精确停靠仍依赖已知物体位姿和 assisted 控制。** 下一步接入 RGB 物体
+  检测/跟踪与末端视觉伺服，并将 demo 方块替换成有碰撞、质量和抓取判据的动态刚体；
+  当前 0.809 m 结果不能表述为纯轮地接触或 OpenVLA 抓取验收。
 - [ ] **P1：MobileManiBench 官方 G1/YCB smoke 的最新资产状态需复核。** 旧
   `task.md` 中“Assets.zip 下载中”的记录可能已过时，应以 `doctor`、ZIP 校验和实际
   reset/step 返回码重新验收。
@@ -71,6 +87,23 @@ LingBot RGB 点云和 occupancy map 上的实时机器人轨迹，并已接入 D
   地点库选择 ID，地图底图是离线 LingBot 结果，机器人位姿、规划路径和轨迹为实时叠加。
 - 启动任务前必须停止其他 Isaac Kit；dashboard 会主动拒绝并发 Kit。
 - 详细接口、输出和限制见 `docs/HOSPITAL_SEMANTIC_NAV.md` 第 5 节。
+
+### 0.1 候诊区多候选停靠（当前进行中）
+
+- 保留现有 `places_formal.json`、LingBot 点云、occupancy map、6006 dashboard 和
+  `waiting_area_reviewed_v1`；不得覆盖当前已验收 demo。
+- [x] 从 Hospital 椅子实例边界生成多个面向座椅的停靠候选，输出到新的隔离目录
+  `outputs/hospital_docking/`。
+- [x] 每个候选检查 map 边界、机器人 footprint clearance、从起点可达性和最终朝向；
+  记录失败原因，不能只保留成功项。
+- [x] 排序考虑可达性、clearance、路径长度和朝向；动态占用已预留
+  `blocked_candidate_ids` 输入接口，不伪造
+  人员/障碍检测结果。
+- [x] 只通过显式 `--dynamic-docking` 或独立 demo 入口启用；默认 `hospital-web` 继续
+  使用当前固定审核点。
+- [ ] 验收：轻量测试已覆盖候选过滤、动态阻塞切换和默认/opt-in 隔离；还需在隔离输出下
+  完成一次真实 Isaac 导航；
+  再次确认默认 dashboard 的目标坐标和既有 0.119 m 基线未被修改。
 
 ### 1. 恢复 Streaming 网络可达性（外部前置条件）
 

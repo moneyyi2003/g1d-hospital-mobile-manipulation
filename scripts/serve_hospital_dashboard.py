@@ -19,12 +19,15 @@ ROOT = Path(__file__).resolve().parents[1]
 WEB_ROOT = ROOT / "hospital_dashboard"
 DEFAULT_ARTIFACTS = ROOT / "outputs/hospital_vln"
 DEFAULT_OUTPUT = ROOT / "outputs/hospital_web"
+DEFAULT_DOCKING_CANDIDATES = (
+    ROOT / "outputs/hospital_docking/waiting_area_candidates.json"
+)
 sys.path.insert(0, str(ROOT))
 
 from hospital_vln.artifacts import HOSPITAL_START  # noqa: E402
 from hospital_vln.intent import HospitalIntentResolver  # noqa: E402
 from simple_room_vln.artifacts import load_lingbot_artifacts  # noqa: E402
-from simple_room_vln.core import path_length  # noqa: E402
+from simple_room_vln.core import Place, Pose2D, path_length  # noqa: E402
 
 
 def _read_json(path: Path) -> dict:
@@ -56,6 +59,36 @@ class HospitalDashboardSession:
         self._places_by_id = {place.place_id: place for place in self.places}
         self.mapping = _read_json(self.mapping_summary_path)
         self.place_payload = _read_json(self.places_path)
+        self.dynamic_docking = bool(getattr(args, "dynamic_docking", False))
+        self.dynamic_candidate = None
+        if self.dynamic_docking:
+            docking_path = getattr(
+                args,
+                "docking_candidates",
+                DEFAULT_DOCKING_CANDIDATES,
+            ).resolve()
+            if not docking_path.is_file():
+                raise FileNotFoundError(
+                    f"Dynamic docking artifact missing: {docking_path}; "
+                    "run ./mobilemanibench.sh hospital-docking first"
+                )
+            docking = _read_json(docking_path)
+            if docking.get("activation") != "explicit_opt_in_only":
+                raise ValueError("Dynamic docking artifact is not explicit-opt-in")
+            if docking.get("map", {}).get("sha256") != self.place_payload["map"]["sha256"]:
+                raise ValueError("Dynamic docking artifact does not match the formal map")
+            runtime_blocked = set(getattr(args, "blocked_candidate", []))
+            self.dynamic_candidate = next(
+                (
+                    item
+                    for item in docking.get("candidates", [])
+                    if item.get("eligible")
+                    and item.get("candidate_id") not in runtime_blocked
+                ),
+                None,
+            )
+            if self.dynamic_candidate is None:
+                raise ValueError("No eligible dynamic docking candidate remains")
         self.map_assets = {}
         for key, value in self.mapping.get("assets", {}).items():
             source = Path(value)
@@ -139,6 +172,11 @@ class HospitalDashboardSession:
             "places": places,
             "camera_stream": "/stream/camera.mjpg",
             "intent_parser": self.intent_resolver.name,
+            "docking_mode": (
+                "experimental_dynamic_candidate"
+                if self.dynamic_docking
+                else "formal_fixed_pose"
+            ),
         }
 
     def _idle_state(self) -> dict:
@@ -193,6 +231,38 @@ class HospitalDashboardSession:
         target = self._places_by_id.get(resolution.place_id)
         if target is None:
             raise ValueError(f"解析结果不在 Hospital 正式地点库中：{resolution.place_id}")
+        docking_resolution = {
+            "mode": "formal_fixed_pose",
+            "candidate_id": f"{target.place_id}_reviewed_v1",
+            "pose": {
+                "x": target.pose.x,
+                "y": target.pose.y,
+                "yaw": target.pose.yaw,
+            },
+        }
+        if (
+            self.dynamic_docking
+            and self.dynamic_candidate is not None
+            and resolution.place_id == "waiting_area"
+        ):
+            value = self.dynamic_candidate
+            pose = value["pose"]
+            target = Place(
+                target.place_id,
+                target.name,
+                target.aliases,
+                Pose2D(float(pose["x"]), float(pose["y"]), float(pose["yaw"])),
+                target.status,
+            )
+            docking_resolution = {
+                "mode": "experimental_dynamic_candidate",
+                "candidate_id": value["candidate_id"],
+                "chair_instance_id": value["chair_instance_id"],
+                "score": value["score"],
+                "clearance_m": value["clearance_m"],
+                "path_length_m": value["path_length_m"],
+                "pose": pose,
+            }
         path = self.grid.plan(
             (HOSPITAL_START.x, HOSPITAL_START.y),
             (target.pose.x, target.pose.y),
@@ -203,6 +273,7 @@ class HospitalDashboardSession:
             "parser": resolution.parser,
             "confidence": resolution.confidence,
             "intent": resolution.intent,
+            "docking": docking_resolution,
         }
 
     @staticmethod
@@ -248,7 +319,8 @@ class HospitalDashboardSession:
                     "state": "starting",
                     "message": (
                         f"{resolution['parser']} 将指令理解为 {target.name}"
-                        f"（置信度 {resolution['confidence']:.2f}），正在启动 Isaac Sim…"
+                        f"（置信度 {resolution['confidence']:.2f}），停靠点 "
+                        f"{resolution['docking']['candidate_id']}，正在启动 Isaac Sim…"
                     ),
                     "command": command,
                     "task": target.place_id,
@@ -306,6 +378,15 @@ class HospitalDashboardSession:
                 "--live-resolution",
                 "960x540",
             ]
+            docking = resolution["docking"]
+            if docking["mode"] == "experimental_dynamic_candidate":
+                pose = docking["pose"]
+                argv.extend(
+                    [
+                        "--dynamic-docking-pose",
+                        f"{pose['x']},{pose['y']},{pose['yaw']}",
+                    ]
+                )
             self._process = subprocess.Popen(
                 argv,
                 cwd=ROOT,
@@ -464,6 +545,22 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Fail startup instead of using exact aliases when the LLM is not configured",
     )
+    parser.add_argument(
+        "--dynamic-docking",
+        action="store_true",
+        help="Explicitly use the isolated experimental multi-chair docking selector",
+    )
+    parser.add_argument(
+        "--docking-candidates",
+        type=Path,
+        default=DEFAULT_DOCKING_CANDIDATES,
+    )
+    parser.add_argument(
+        "--blocked-candidate",
+        action="append",
+        default=[],
+        help="Runtime dynamic-occupancy rejection; may be repeated",
+    )
     return parser.parse_args()
 
 
@@ -475,6 +572,10 @@ def main() -> int:
     server.session = session
     print(f"Hospital dashboard: http://{args.host}:{args.port}")
     print(f"Intent parser: {session.intent_resolver.name}")
+    print(
+        "Docking mode: "
+        + ("experimental_dynamic_candidate" if session.dynamic_docking else "formal_fixed_pose")
+    )
     print("Fuzzy examples: 带我去找个能坐着等医生的地方 / 我想找工作人员问点事情")
     try:
         server.serve_forever()

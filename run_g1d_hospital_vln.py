@@ -50,6 +50,22 @@ def parse_args() -> argparse.Namespace:
         default="",
         help="Use a previously validated catalog place id instead of parsing --command again",
     )
+    parser.add_argument(
+        "--dynamic-docking-pose",
+        default="",
+        help="Experimental opt-in X,Y,YAW pose selected by the validated docking layer",
+    )
+    parser.add_argument(
+        "--demo-object-pose",
+        default="",
+        help="Isolated demo-only object marker X,Y,Z; omitted by the stable Hospital demo",
+    )
+    parser.add_argument(
+        "--demo-object-size",
+        type=float,
+        default=0.10,
+        help="Visual cube edge length for --demo-object-pose",
+    )
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument("--map", type=Path, default=DEFAULT_MAP)
     parser.add_argument("--places", type=Path, default=DEFAULT_PLACES)
@@ -61,6 +77,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--steps", type=int, default=0)
     parser.add_argument("--record-gif", type=Path)
     parser.add_argument("--record-fps", type=int, default=5)
+    parser.add_argument("--position-tolerance", type=float, default=0.12)
+    parser.add_argument("--yaw-tolerance", type=float, default=0.12)
     parser.add_argument(
         "--live-dir",
         type=Path,
@@ -144,6 +162,38 @@ if not 1 <= args.live_fps <= 30:
     raise SystemExit("--live-fps must be between 1 and 30")
 if live_width <= 0 or live_height <= 0:
     raise SystemExit("--live-resolution dimensions must be positive")
+dynamic_docking_values = None
+if args.dynamic_docking_pose:
+    if not args.target_id or args.survey:
+        raise SystemExit("--dynamic-docking-pose requires --target-id and non-survey mode")
+    try:
+        dynamic_docking_values = tuple(
+            float(value) for value in args.dynamic_docking_pose.split(",")
+        )
+    except ValueError as exc:
+        raise SystemExit("--dynamic-docking-pose must be X,Y,YAW") from exc
+    if len(dynamic_docking_values) != 3 or not all(
+        math.isfinite(value) for value in dynamic_docking_values
+    ):
+        raise SystemExit("--dynamic-docking-pose must contain three finite values")
+demo_object_values = None
+if args.demo_object_pose:
+    if dynamic_docking_values is None or args.survey:
+        raise SystemExit("--demo-object-pose requires an experimental docking pose")
+    try:
+        demo_object_values = tuple(float(value) for value in args.demo_object_pose.split(","))
+    except ValueError as exc:
+        raise SystemExit("--demo-object-pose must be X,Y,Z") from exc
+    if len(demo_object_values) != 3 or not all(
+        math.isfinite(value) for value in demo_object_values
+    ):
+        raise SystemExit("--demo-object-pose must contain three finite values")
+    if not math.isfinite(args.demo_object_size) or not 0.02 <= args.demo_object_size <= 0.50:
+        raise SystemExit("--demo-object-size must be between 0.02 and 0.50 m")
+if not 0.01 <= args.position_tolerance <= 0.30:
+    raise SystemExit("--position-tolerance must be between 0.01 and 0.30 m")
+if not 0.01 <= args.yaw_tolerance <= 0.50:
+    raise SystemExit("--yaw-tolerance must be between 0.01 and 0.50 rad")
 
 for required in (ROOM_USD, ROBOT_USD):
     if not required.is_file():
@@ -173,7 +223,7 @@ import numpy as np
 from isaacsim.core.rendering_manager import ViewportManager
 from isaacsim.core.simulation_manager import SimulationManager
 from isaacsim.robot.experimental.wheeled_robots.robots import WheeledRobot
-from pxr import Gf, Usd, UsdGeom, UsdLux
+from pxr import Gf, Sdf, Usd, UsdGeom, UsdLux, UsdShade
 
 from hospital_vln.artifacts import (
     HOSPITAL_START,
@@ -182,7 +232,7 @@ from hospital_vln.artifacts import (
 )
 from hospital_vln.live import LivePublisher, publish_failure
 from simple_room_vln.artifacts import load_lingbot_artifacts
-from simple_room_vln.core import PathFollower, Pose2D, path_length, resolve_place
+from simple_room_vln.core import PathFollower, Place, Pose2D, path_length, resolve_place
 
 
 def command_to_wheels(linear: float, angular: float) -> np.ndarray:
@@ -377,6 +427,65 @@ def add_scene(path: Sequence[tuple[float, float]], target: Pose2D | None) -> Non
         UsdGeom.Xformable(marker).AddTranslateOp().Set(
             Gf.Vec3d(target.x, target.y, FLOOR_Z_M + 0.025)
         )
+    if demo_object_values is not None:
+        object_x, object_y, object_z = demo_object_values
+        pedestal_height = max(0.10, object_z - args.demo_object_size / 2.0)
+
+        def bind_material(prim, name: str, color: Gf.Vec3f, *, emissive=False) -> None:
+            material = UsdShade.Material.Define(
+                stage, f"/World/ObjectDockingDemo/Materials/{name}"
+            )
+            shader = UsdShade.Shader.Define(
+                stage, f"/World/ObjectDockingDemo/Materials/{name}/Shader"
+            )
+            shader.CreateIdAttr("UsdPreviewSurface")
+            shader.CreateOutput("surface", Sdf.ValueTypeNames.Token)
+            shader.CreateInput("diffuseColor", Sdf.ValueTypeNames.Color3f).Set(color)
+            shader.CreateInput("roughness", Sdf.ValueTypeNames.Float).Set(0.45)
+            if emissive:
+                shader.CreateInput("emissiveColor", Sdf.ValueTypeNames.Color3f).Set(color)
+            material.CreateSurfaceOutput().ConnectToSource(
+                shader.ConnectableAPI(), "surface"
+            )
+            UsdShade.MaterialBindingAPI.Apply(prim).Bind(material)
+
+        pedestal = UsdGeom.Cube.Define(stage, "/World/ObjectDockingDemo/Pedestal")
+        pedestal.CreateDisplayColorAttr([Gf.Vec3f(0.22, 0.26, 0.30)])
+        bind_material(pedestal.GetPrim(), "Pedestal", Gf.Vec3f(0.22, 0.26, 0.30))
+        pedestal_xform = UsdGeom.Xformable(pedestal)
+        pedestal_xform.AddTranslateOp().Set(
+            Gf.Vec3d(object_x, object_y + 0.22, FLOOR_Z_M + pedestal_height / 2.0)
+        )
+        pedestal_xform.AddScaleOp().Set(
+            Gf.Vec3f(0.25, 0.25, pedestal_height / 2.0)
+        )
+        cube = UsdGeom.Cube.Define(stage, "/World/ObjectDockingDemo/RedCube")
+        cube.CreateSizeAttr(args.demo_object_size)
+        cube.CreateDisplayColorAttr([Gf.Vec3f(0.95, 0.03, 0.03)])
+        bind_material(cube.GetPrim(), "RedCube", Gf.Vec3f(0.95, 0.03, 0.03), emissive=True)
+        cube_xform = UsdGeom.Xformable(cube)
+        cube_xform.AddTranslateOp().Set(Gf.Vec3d(object_x, object_y, object_z))
+        object_bounds = UsdGeom.BBoxCache(
+            Usd.TimeCode.Default(), [UsdGeom.Tokens.default_]
+        ).ComputeWorldBound(cube.GetPrim()).ComputeAlignedRange()
+        print(
+            "Object docking demo RedCube bounds: "
+            f"min={tuple(object_bounds.GetMin())}, max={tuple(object_bounds.GetMax())}"
+        )
+        approach = UsdGeom.BasisCurves.Define(
+            stage, "/World/ObjectDockingDemo/StandoffConstraint"
+        )
+        approach.CreateTypeAttr("linear")
+        approach.CreateCurveVertexCountsAttr([2])
+        approach.CreatePointsAttr(
+            [
+                Gf.Vec3f(target.x, target.y, FLOOR_Z_M + 0.08),
+                Gf.Vec3f(object_x, object_y, FLOOR_Z_M + 0.08),
+            ]
+        )
+        approach.CreateWidthsAttr([0.035])
+        approach.SetWidthsInterpolation("constant")
+        approach.CreateDisplayColorAttr([Gf.Vec3f(1.0, 0.65, 0.05)])
     route = UsdGeom.BasisCurves.Define(stage, "/World/VLN/PlannedPath")
     route.CreateTypeAttr("linear")
     route.CreateCurveVertexCountsAttr([len(path)])
@@ -486,6 +595,14 @@ def main() -> int:
         task = "hospital_reception_rgb_survey"
     else:
         target = resolve_place(args.target_id or args.command, places)
+        if dynamic_docking_values is not None:
+            target = Place(
+                target.place_id,
+                target.name,
+                target.aliases,
+                Pose2D(*dynamic_docking_values),
+                target.status,
+            )
         path = grid.plan(
             (HOSPITAL_START.x, HOSPITAL_START.y), (target.pose.x, target.pose.y)
         )
@@ -609,6 +726,8 @@ def main() -> int:
         goal_yaw=goal_yaw,
         max_linear=0.72 if args.survey else 0.55,
         max_angular=1.20,
+        position_tolerance=args.position_tolerance,
+        yaw_tolerance=args.yaw_tolerance,
     )
     frame = 0
     last_label = "start"
@@ -719,6 +838,32 @@ def main() -> int:
         "command": None if args.survey else args.command,
         "map_source": map_source,
         "execution_mode": "wheel_physics_only" if args.wheel_physics_only else "stable_assisted",
+        "docking_mode": (
+            "object_relative_precision_demo"
+            if demo_object_values is not None
+            else "experimental_dynamic_candidate"
+            if dynamic_docking_values is not None
+            else "formal_fixed_pose"
+        ),
+        "target_pose": {
+            "x": path[-1][0],
+            "y": path[-1][1],
+            "yaw": goal_yaw,
+        },
+        "demo_object": (
+            {
+                "x": demo_object_values[0],
+                "y": demo_object_values[1],
+                "z": demo_object_values[2],
+                "size_m": args.demo_object_size,
+                "base_distance_m": math.dist(
+                    (final_pose.x, final_pose.y),
+                    (demo_object_values[0], demo_object_values[1]),
+                ),
+            }
+            if demo_object_values is not None
+            else None
+        ),
         "camera_enabled": camera is not None,
         "success": follower.done,
         "frames": frame,

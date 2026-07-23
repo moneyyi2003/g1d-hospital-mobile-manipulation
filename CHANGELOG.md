@@ -5,6 +5,60 @@
 
 ## 2026-07-23
 
+### Hospital 物体级参数化精确停靠
+
+- 新增独立 `hospital-object-docking` 入口、demo-only 物体目录和无 Isaac 依赖的停靠
+  模块；支持“方块前 0.6/0.8 米”等指令，按物体交互面计算带朝向的 SE(2) 终点。
+- 终点在正式 LingBot occupancy map 上检查机器人 footprint 和路径可达性；过近距离会按
+  机器人半径与物体尺寸拒绝，而不是直接把任意 LLM 坐标交给控制器。
+- 独立 demo 显式使用 0.03 m 位置和 0.05 rad 朝向阈值；原 Hospital 默认仍为
+  0.12/0.12，正式地点库、地图、6006 dashboard 和既有输出目录均未改变。
+- Isaac 场景仅在 opt-in demo 中生成台座、方块、停靠圆盘和 standoff 线；输出写入
+  `outputs/hospital_object_docking/`，包括计划、运行摘要、头部 RGB、live state 和 GIF。
+
+验证：
+
+- `hospital_vln.tests.test_object_docking` 4/4 通过：覆盖距离解析、对象解析、安全下限、
+  精确相对位姿和正式地图可达性。
+- Isaac Sim 6.0.1 headless 真实运行“请停到红色方块前0.8米”成功：619 帧、路径
+  2.657 m、停靠点位置误差 0.030 m、航向误差 0.050 rad，实际基座到方块中心
+  0.809 m；G1-D 头部 RGB 与 52 帧第三人称 GIF 已生成并目视检查。
+- USD 运行时包围盒确认方块位于预期世界坐标；`--plan-only` 不启动 Isaac 即可复算
+  距离约束和路径。
+
+已知限制：
+
+- 当前方块是 demo-only 视觉几何，不带刚体/接触/抓取成功判据；本次只验收到
+  `PREGRASP_DOCK`，没有声称 OpenVLA 已完成抓取。
+- 精度来自 `stable_assisted`；纯轮地接触底盘仍沿用既有失败证据，接 VLA 前还需要
+  物体检测/跟踪和近距离视觉伺服。
+
+### Hospital 候诊区多候选停靠（进行中）
+
+- 新增依赖轻量的候选生成/检查/排序模块和独立构建脚本，输出固定写入
+  `outputs/hospital_docking/`，不修改正式地点库、LingBot 点云或 occupancy map。
+- 从 Hospital USD 实测的 4 个 `SM_Chair_02a` 长椅边界生成南/北共 8 个候选；每项记录
+  footprint、occupancy、可达性、clearance、路径长度、朝向误差、评分和拒绝原因。
+- 首次构建保留 3/8 个候选，选择路径较短的
+  `chair_02a6_south=(-5.117,-0.878,1.571)`；另外 5 个因占用/未知或 footprint clearance
+  不足被拒绝。
+- 选择器接受显式 `blocked_candidate_ids`，为后续人员/动态障碍输入预留接口；当前不伪造
+  动态感知结果。
+- 新增 `hospital-docking` 构建命令；dashboard 只有显式传入 `--dynamic-docking` 才加载
+  隔离候选，并把选定 pose 作为实验参数交给 Isaac。默认模式继续使用正式固定点。
+
+验证：
+
+- 构建前后 `map.pgm`、`places_formal.json`、`rgb_pointcloud.png` 的 SHA-256 未变化。
+- `hospital_vln/docking.py` 和 `scripts/build_hospital_docking.py` 编译通过，
+  `git diff --check` 通过。
+- Hospital 测试 8/8、`lingbot_semantic_nav` 测试 21/21；覆盖 occupancy 拒绝、
+  动态阻塞切换、默认固定点和 opt-in 动态点。
+
+未完成：
+
+- 尚未执行隔离的 Isaac 动态停靠 demo；默认 6006 dashboard 仍运行原固定停靠点。
+
 ### Hospital DeepSeek 模糊地点理解
 
 - Hospital dashboard 从精确别名解析升级为 DeepSeek 结构化意图解析；模型只能在正式

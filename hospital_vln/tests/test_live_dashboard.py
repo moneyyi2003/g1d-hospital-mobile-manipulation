@@ -201,6 +201,8 @@ class HospitalDashboardSessionTest(unittest.TestCase):
             self.assertEqual(target.place_id, "waiting_area")
             self.assertEqual(resolution["parser"], "deepseek")
             self.assertEqual(resolution["confidence"], 0.93)
+            self.assertEqual(resolution["docking"]["mode"], "formal_fixed_pose")
+            self.assertEqual(target.pose.x, -1.0)
             self.assertGreaterEqual(len(path), 2)
             self.assertEqual(config["intent_parser"], "deepseek")
             self.assertEqual(
@@ -218,6 +220,51 @@ class HospitalDashboardSessionTest(unittest.TestCase):
             self.assertEqual(
                 session.map_asset("occupancy"),
                 (preview / "occupancy.png").resolve(),
+            )
+
+            docking_path = root / "dynamic_candidates.json"
+            docking_path.write_text(
+                json.dumps(
+                    {
+                        "activation": "explicit_opt_in_only",
+                        "map": {"sha256": "0" * 64},
+                        "candidates": [
+                            {
+                                "candidate_id": "chair_right_south",
+                                "chair_instance_id": "chair_right",
+                                "eligible": True,
+                                "score": 0.8,
+                                "clearance_m": 0.7,
+                                "path_length_m": 2.0,
+                                "pose": {"x": -1.5, "y": 0.5, "yaw": 1.57},
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            dynamic_session = HospitalDashboardSession(
+                argparse.Namespace(
+                    artifacts=artifacts,
+                    output=root / "dynamic-web-output",
+                    intent_resolver=self.FakeIntentResolver(),
+                    dynamic_docking=True,
+                    docking_candidates=docking_path,
+                    blocked_candidate=[],
+                )
+            )
+            dynamic_target, _, dynamic_resolution = dynamic_session.plan(
+                "找个能坐着等医生的地方"
+            )
+
+            self.assertEqual(dynamic_target.pose.x, -1.5)
+            self.assertEqual(
+                dynamic_resolution["docking"]["candidate_id"],
+                "chair_right_south",
+            )
+            self.assertEqual(
+                dynamic_session.config()["docking_mode"],
+                "experimental_dynamic_candidate",
             )
 
 
