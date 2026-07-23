@@ -19,7 +19,11 @@
       <form id="commandForm">
         <label for="commandInput">导航指令</label>
         <div class="command-row">
-          <input id="commandInput" value="请带我到候诊区" autocomplete="off" />
+          <input
+            id="commandInput"
+            value="带我去找个能坐着等医生的地方"
+            autocomplete="off"
+          />
           <button id="submitButton" type="submit">执行</button>
           <button id="cancelButton" type="button" class="secondary">停止</button>
         </div>
@@ -59,6 +63,7 @@
 
     <section class="telemetry">
       <div><span>目标</span><b id="task">—</b></div>
+      <div><span>语言理解</span><b id="intent">—</b></div>
       <div><span>动作</span><b id="action">—</b></div>
       <div><span>位置</span><b id="pose">—</b></div>
       <div><span>速度</span><b id="velocity">—</b></div>

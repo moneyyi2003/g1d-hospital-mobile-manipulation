@@ -7,9 +7,10 @@
 Hospital 语义导航 MVP 已在确定性 `stable_assisted` 模式通过，当前主线应转向
 G1-D 纯轮地接触物理控制的稳定性与回归；完成后再推进移动操作任务。根目录长期维护
 机制已经建立。Hospital TCP dashboard 已能在浏览器同步显示 Isaac chase camera、
-LingBot RGB 点云和 occupancy map 上的实时机器人轨迹，不依赖 WebRTC UDP。2026-07-23
-的 WebRTC 排查仍确认：当前 AutoDL 公有云实例没有浏览器可达的 47998/UDP 媒体路径；
-该外部网络条件解决前，原生 WebRTC 页面仍会停在 `WAITING FOR STREAM`。
+LingBot RGB 点云和 occupancy map 上的实时机器人轨迹，并已接入 DeepSeek 模糊地点
+理解，不依赖 WebRTC UDP。2026-07-23 的 WebRTC 排查仍确认：当前 AutoDL 公有云实例
+没有浏览器可达的 47998/UDP 媒体路径；该外部网络条件解决前，原生 WebRTC 页面仍会
+停在 `WAITING FOR STREAM`。
 
 ## 已完成并验证
 
@@ -34,6 +35,10 @@ LingBot RGB 点云和 occupancy map 上的实时机器人轨迹，不依赖 WebR
   chase camera、LingBot RGB 点云和 occupancy map 上的规划路径与实际轨迹。
 - [x] 实机通过 dashboard 执行“请带我到候诊区”：约 57 秒结束，1092 帧，位置误差
   0.119 m，航向误差 0.117 rad；HTTP 地图资源和 MJPEG 流均读取成功。
+- [x] Hospital dashboard 接入受地点库约束的 DeepSeek 解析；地点库增加可信功能描述，
+  LLM 只能返回审核 `place_id`，坐标仍由地点库提供。
+- [x] 模糊指令“带我去找个能坐着等医生的地方”真实 DeepSeek + Isaac demo 成功：
+  未出现地点名，解析为 `waiting_area`（置信度 1.00），1092 帧到达，位置误差 0.119 m。
 
 ## 当前问题
 
@@ -62,8 +67,8 @@ LingBot RGB 点云和 occupancy map 上的实时机器人轨迹，不依赖 WebR
 
 - 运行 `./mobilemanibench.sh hospital-web --host 0.0.0.0 --port 6006`，通过 AutoDL
   HTTP 自定义服务或 SSH TCP 隧道访问。
-- 输入“请带我到候诊区”或“请带我到医院前台”；地图底图是离线 LingBot 结果，机器人
-  位姿、规划路径和实际轨迹为实时叠加。
+- 输入“带我去找个能坐着等医生的地方”或“我想找工作人员问点事情”；DeepSeek 从审核
+  地点库选择 ID，地图底图是离线 LingBot 结果，机器人位姿、规划路径和轨迹为实时叠加。
 - 启动任务前必须停止其他 Isaac Kit；dashboard 会主动拒绝并发 Kit。
 - 详细接口、输出和限制见 `docs/HOSPITAL_SEMANTIC_NAV.md` 第 5 节。
 

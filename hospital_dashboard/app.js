@@ -100,6 +100,10 @@ function render() {
   badge.className = `badge ${state.state}`;
   $("message").textContent = state.message;
   $("task").textContent = state.task || "—";
+  const resolution = state.intent_resolution;
+  $("intent").textContent = resolution
+    ? `${resolution.parser} · ${resolution.place_name} · ${(resolution.confidence || 0).toFixed(2)}`
+    : "—";
   $("action").textContent = state.action || "—";
   $("pose").textContent = `x ${state.pose.x.toFixed(2)} · y ${state.pose.y.toFixed(2)} · ψ ${state.pose.yaw.toFixed(2)}`;
   $("velocity").textContent = `${(state.linear_velocity_mps || 0).toFixed(2)} m/s · ${(state.angular_velocity_rps || 0).toFixed(2)} rad/s`;
@@ -108,7 +112,9 @@ function render() {
   $("submitButton").disabled = Boolean(state.process_running);
   drawMap("pointcloudCanvas", app.images.rgb_pointcloud);
   drawMap("occupancyCanvas", app.images.occupancy);
-  if (state.process_running && !app.cameraStarted) {
+  const cameraAvailable =
+    state.process_running || ["succeeded", "failed", "canceled"].includes(state.state);
+  if (cameraAvailable && !app.cameraStarted) {
     app.cameraStarted = true;
     $("cameraView").src = `${app.config.camera_stream}?session=${Date.now()}`;
     $("cameraView").style.display = "block";
@@ -149,12 +155,15 @@ $("cancelButton").addEventListener("click", async () => {
 async function initialize() {
   app.config = await request("/api/config");
   $("placeChips").innerHTML = app.config.places
-    .map((place) => `<button type="button" data-id="${place.id}">${place.name}</button>`)
+    .map((place) => {
+      const example = place.examples?.[0] || `请带我到${place.name}`;
+      return `<button type="button" data-id="${place.id}">${example}</button>`;
+    })
     .join("");
   $("placeChips").querySelectorAll("button").forEach((button) => {
     button.onclick = () => {
       const place = app.config.places.find((item) => item.id === button.dataset.id);
-      $("commandInput").value = `请带我到${place.name}`;
+      $("commandInput").value = place.examples?.[0] || `请带我到${place.name}`;
     };
   });
   const layers = Object.fromEntries(app.config.map.layers.map((layer) => [layer.id, layer.asset]));

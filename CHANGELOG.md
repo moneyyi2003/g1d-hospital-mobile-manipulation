@@ -5,6 +5,36 @@
 
 ## 2026-07-23
 
+### Hospital DeepSeek 模糊地点理解
+
+- Hospital dashboard 从精确别名解析升级为 DeepSeek 结构化意图解析；模型只能在正式
+  地点库中选择 `place_id`，不能生成坐标、路径或未审核地点。
+- 正式 Hospital 地点条目增加功能描述和典型自然语言请求，并迁移到严格 schema-v2
+  docking checks/review 格式，可被统一 `PlaceDatabase` 验证。
+- DeepSeek 系统提示明确使用地点 metadata 做目的/活动/服务语义归一，例如将“找个能
+  坐着等医生的地方”映射到提供等待就诊功能的地点。
+- dashboard 将已校验的 `--target-id` 交给 Isaac，保留原始自然语言用于日志和页面；
+  避免模拟器再次用字符串规则解析模糊原句。
+- 页面新增“语言理解”遥测，显示解析器、目标和置信度；默认输入和快捷按钮改为不含
+  地点名的模糊表达。
+
+验证：
+
+- 真实 DeepSeek 单独解析“带我去找个能坐着等医生的地方”为 `waiting_area`，首次
+  置信度 0.95；返回坐标来自正式地点库而非模型。
+- 从 dashboard 再次提交同一模糊指令，DeepSeek 返回 `waiting_area`、置信度 1.00；
+  Isaac Sim 6.0.1 完成 1092 帧、7.376 m 导航，位置误差 0.119 m，航向误差
+  0.117 rad。
+- Hospital 测试在系统 Python 和主 Isaac Python 下均为 6/6；`lingbot_semantic_nav`
+  测试 21/21 通过。
+
+已知限制：
+
+- 当前正式地点仍只有 `reception` 和 `waiting_area`；模糊理解不能弥补地点库缺失。
+- DeepSeek API 失败时可回退到精确别名，但无法离线理解新的功能表达；严格 demo 可用
+  `--no-rule-fallback` 禁止回退。
+- 语言理解只扩展 VLN 目标选择，不代表“拿水”等抓取动作已经实现。
+
 ### Hospital 指令驱动三视图实时 dashboard
 
 - 新增 `hospital-web` 命令和 `scripts/serve_hospital_dashboard.py`，提供纯 HTTP/TCP

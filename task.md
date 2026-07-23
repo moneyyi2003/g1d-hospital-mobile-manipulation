@@ -17,6 +17,8 @@ MobileManiBench 场景/物体，至少完成：
 - [x] 头部 RGB 巡检、LingBot-Map RGB-only 推理、米制对齐和 ROS occupancy 地图。
 - [x] 生成经审核的正式地点库，当前开放 `reception` 和 `waiting_area`。
 - [x] 中文指令“请带我到候诊区”解析、规划和确定性导航成功。
+- [x] Hospital dashboard 接入 DeepSeek 模糊地点解析；“带我去找个能坐着等医生的地方”
+  在不出现地点名时选择正式 `waiting_area` 并完成真实 Isaac 导航。
 - [x] 端到端命令 `hospital-vln --headless --test --no-camera` 返回 0；路径
   7.376 m，1092 帧，终点位置误差 0.119 m，航向误差 0.117 rad。
 - [ ] 纯轮地接触物理模式（`--wheel-physics-only`）的摩擦/驱动调参与稳定回归；

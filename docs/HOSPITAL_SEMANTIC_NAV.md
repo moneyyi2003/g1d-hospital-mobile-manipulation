@@ -124,10 +124,34 @@ ps -eo pid,etime,cmd | grep '/isaacsim/kit/kit '
 ./mobilemanibench.sh hospital-web --host 0.0.0.0 --port 6006
 ```
 
-浏览器打开 `http://服务器地址:6006`，输入“请带我到候诊区”或
-“请带我到医院前台”，点击“执行”。服务端只接受正式地点库中已审核的目标；页面会先显示
-规划路径，再启动主 Isaac Sim 6.0.1 headless 进程，并以约 10 Hz 更新状态和 chase
-camera。点击“停止”会向当前 Isaac 子进程发送终止请求。
+浏览器打开 `http://服务器地址:6006`。页面默认提供不包含地点名称的模糊指令，例如
+“带我去找个能坐着等医生的地方”和“我想找工作人员问点事情”。DeepSeek 会结合正式
+地点库中的名称、别名、功能描述和典型请求，只返回已审核的地点 ID；页面的“语言理解”
+栏会显示解析器、目标和置信度。程序随后读取该 ID 的 docking pose、显示规划路径，再
+启动主 Isaac Sim 6.0.1 headless 进程，并以约 10 Hz 更新状态和 chase camera。点击
+“停止”会向当前 Isaac 子进程发送终止请求。
+
+语言层与导航层的安全边界是：
+
+```text
+自然语言
+  -> DeepSeek 结构化意图（只能选择 catalog place_id）
+  -> 校验 place_id 属于已审核地点库
+  -> 程序读取 docking pose
+  -> occupancy map 路径规划
+  -> Isaac 导航
+```
+
+DeepSeek 不生成坐标、不规划路径，也不能添加地点库之外的目标。API 不可用时默认只回退到
+精确别名规则；模糊语义不会被假装解析成功。严格演示可禁用回退：
+
+```bash
+./mobilemanibench.sh hospital-web --host 0.0.0.0 --port 6006 \
+  --no-rule-fallback
+```
+
+DeepSeek 配置读取已被 Git 忽略的 `lingbot_semantic_nav/.env`；变量名和示例见
+`lingbot_semantic_nav/.env.example`，不得把真实密钥写入文档或提交。
 
 AutoDL 需要把 6006 配置成 TCP/HTTP 自定义服务；也可以从本地做 TCP 隧道：
 
@@ -143,9 +167,11 @@ Isaac Streaming，应先正常停止它。
 
 - `live/state.json`：指令、目标、当前状态、位姿、规划路径、实际轨迹和最终结果；
 - `live/camera.jpg`：最新 Isaac chase camera 帧；
+- `intent_resolution.json`：最近一次 DeepSeek 地点选择，供 dashboard 重启后恢复显示；
 - `isaac.log`：本轮 Isaac 启动与导航日志。
 
-这些都是可覆盖的运行输出，不进入 Git。2026-07-23 实机验收“请带我到候诊区”成功：
-dashboard 从指令提交到进程结束约 57 秒，导航 1092 帧，位置误差 0.119 m，航向误差
-0.117 rad；HTTP 页面、两张地图资源和 MJPEG 流均实际读取成功。该结果仍属于
-`stable_assisted` 高层演示，不代表 `--wheel-physics-only` 验收通过。
+这些都是可覆盖的运行输出，不进入 Git。2026-07-23 实机验收模糊指令
+“带我去找个能坐着等医生的地方”成功：句子未出现任何地点名，真实 DeepSeek 返回
+`waiting_area`，置信度 1.00；dashboard 规划 7.376 m 路径并完成 1092 帧导航，位置误差
+0.119 m，航向误差 0.117 rad。HTTP 页面、两张地图资源和 MJPEG 流均实际读取成功。
+该结果仍属于 `stable_assisted` 高层演示，不代表 `--wheel-physics-only` 验收通过。

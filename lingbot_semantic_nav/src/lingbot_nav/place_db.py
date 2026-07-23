@@ -130,7 +130,13 @@ class PlaceDatabase:
 
     def catalog_for_prompt(self) -> list[dict[str, object]]:
         return [
-            {"id": p.place_id, "name": p.name, "aliases": list(p.aliases)}
+            {
+                "id": p.place_id,
+                "name": p.name,
+                "aliases": list(p.aliases),
+                "region": p.region,
+                "metadata": dict(p.metadata),
+            }
             for p in self.places
         ]
 

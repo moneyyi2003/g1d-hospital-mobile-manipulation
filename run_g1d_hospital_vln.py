@@ -45,6 +45,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--test", action="store_true", help="Run a short headless assertion")
     parser.add_argument("--survey", action="store_true", help="Record a LingBot-ready RGB survey")
     parser.add_argument("--command", default="请带我到医院前台")
+    parser.add_argument(
+        "--target-id",
+        default="",
+        help="Use a previously validated catalog place id instead of parsing --command again",
+    )
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument("--map", type=Path, default=DEFAULT_MAP)
     parser.add_argument("--places", type=Path, default=DEFAULT_PLACES)
@@ -480,7 +485,7 @@ def main() -> int:
         goal_yaw = HOSPITAL_START.yaw
         task = "hospital_reception_rgb_survey"
     else:
-        target = resolve_place(args.command, places)
+        target = resolve_place(args.target_id or args.command, places)
         path = grid.plan(
             (HOSPITAL_START.x, HOSPITAL_START.y), (target.pose.x, target.pose.y)
         )
@@ -490,7 +495,8 @@ def main() -> int:
     print(f"Map source: {map_source}")
     print(f"Task: {task}")
     if target is not None:
-        print(f"Resolved {args.command!r} -> {target.place_id}")
+        source = args.target_id or args.command
+        print(f"Resolved {source!r} -> {target.place_id}")
     print(f"Planned {len(path)} waypoints, length={path_length(path):.3f} m")
 
     live = None

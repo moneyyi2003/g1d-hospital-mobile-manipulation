@@ -22,8 +22,9 @@ DEFAULT_OUTPUT = ROOT / "outputs/hospital_web"
 sys.path.insert(0, str(ROOT))
 
 from hospital_vln.artifacts import HOSPITAL_START  # noqa: E402
+from hospital_vln.intent import HospitalIntentResolver  # noqa: E402
 from simple_room_vln.artifacts import load_lingbot_artifacts  # noqa: E402
-from simple_room_vln.core import path_length, resolve_place  # noqa: E402
+from simple_room_vln.core import path_length  # noqa: E402
 
 
 def _read_json(path: Path) -> dict:
@@ -35,6 +36,7 @@ class HospitalDashboardSession:
         self.artifacts = args.artifacts.resolve()
         self.output = args.output.resolve()
         self.live_dir = self.output / "live"
+        self.intent_resolution_path = self.output / "intent_resolution.json"
         self.output.mkdir(parents=True, exist_ok=True)
         self.live_dir.mkdir(parents=True, exist_ok=True)
         self.map_yaml = self.artifacts / "lingbot_map/map.yaml"
@@ -46,6 +48,12 @@ class HospitalDashboardSession:
             raise FileNotFoundError("Hospital dashboard artifacts missing: " + ", ".join(missing))
 
         self.grid, self.places = load_lingbot_artifacts(self.map_yaml, self.places_path)
+        self.intent_resolver = getattr(args, "intent_resolver", None) or HospitalIntentResolver(
+            self.places_path,
+            provider=getattr(args, "intent_provider", "deepseek"),
+            allow_rule_fallback=not getattr(args, "no_rule_fallback", False),
+        )
+        self._places_by_id = {place.place_id: place for place in self.places}
         self.mapping = _read_json(self.mapping_summary_path)
         self.place_payload = _read_json(self.places_path)
         self.map_assets = {}
@@ -76,6 +84,25 @@ class HospitalDashboardSession:
         self._log_stream = None
         self._started_at: float | None = None
         self._last_command = ""
+        self._last_resolution: dict | None = None
+        try:
+            saved_resolution = _read_json(self.intent_resolution_path)
+        except (OSError, ValueError, json.JSONDecodeError):
+            saved_resolution = {}
+        if isinstance(saved_resolution, dict):
+            self._last_command = str(saved_resolution.get("command", ""))
+            value = saved_resolution.get("intent_resolution")
+            if isinstance(value, dict):
+                self._last_resolution = value
+        try:
+            previous_state = _read_json(self.live_dir / "state.json")
+        except (OSError, ValueError, json.JSONDecodeError):
+            previous_state = {}
+        if isinstance(previous_state, dict):
+            self._last_command = str(previous_state.get("command", self._last_command))
+            previous_resolution = previous_state.get("intent_resolution")
+            if isinstance(previous_resolution, dict):
+                self._last_resolution = previous_resolution
 
     def config(self) -> dict:
         places = []
@@ -88,6 +115,7 @@ class HospitalDashboardSession:
                     "id": item["id"],
                     "name": item["name"],
                     "aliases": item.get("aliases", []),
+                    "examples": item.get("metadata", {}).get("typical_requests", []),
                     "pose": {
                         "x": float(pose["x"]),
                         "y": float(pose["y"]),
@@ -110,6 +138,7 @@ class HospitalDashboardSession:
             "map": map_config,
             "places": places,
             "camera_stream": "/stream/camera.mjpg",
+            "intent_parser": self.intent_resolver.name,
         }
 
     def _idle_state(self) -> dict:
@@ -133,6 +162,7 @@ class HospitalDashboardSession:
             "planned_trajectory": [],
             "trajectory": [],
             "result": None,
+            "intent_resolution": self._last_resolution,
             "elapsed_sec": 0.0,
             "process_running": False,
         }
@@ -151,19 +181,29 @@ class HospitalDashboardSession:
         except (OSError, ValueError, json.JSONDecodeError):
             state = self._idle_state()
         state["process_running"] = running
+        state["intent_resolution"] = self._last_resolution
         state["elapsed_sec"] = max(0.0, time.time() - started_at) if started_at else 0.0
         if process is not None and not running and state.get("state") in {"loading", "running"}:
             state["state"] = "failed"
             state["message"] = f"Isaac Sim 进程已退出，返回码 {process.returncode}。"
         return state
 
-    def plan(self, command: str) -> tuple[object, list[tuple[float, float]]]:
-        target = resolve_place(command, self.places)
+    def plan(self, command: str) -> tuple[object, list[tuple[float, float]], dict]:
+        resolution = self.intent_resolver.resolve(command)
+        target = self._places_by_id.get(resolution.place_id)
+        if target is None:
+            raise ValueError(f"解析结果不在 Hospital 正式地点库中：{resolution.place_id}")
         path = self.grid.plan(
             (HOSPITAL_START.x, HOSPITAL_START.y),
             (target.pose.x, target.pose.y),
         )
-        return target, path
+        return target, path, {
+            "place_id": resolution.place_id,
+            "place_name": resolution.place_name,
+            "parser": resolution.parser,
+            "confidence": resolution.confidence,
+            "intent": resolution.intent,
+        }
 
     @staticmethod
     def _other_kit_processes() -> list[int]:
@@ -184,7 +224,10 @@ class HospitalDashboardSession:
 
     def submit(self, command: str) -> dict:
         command = command.strip()
-        target, path = self.plan(command)
+        with self._lock:
+            if self._process is not None and self._process.poll() is None:
+                raise ValueError("已有 Hospital 任务正在运行，请先等待或停止任务")
+        target, path, resolution = self.plan(command)
         with self._lock:
             if self._process is not None and self._process.poll() is None:
                 raise ValueError("已有 Hospital 任务正在运行，请先等待或停止任务")
@@ -203,9 +246,13 @@ class HospitalDashboardSession:
             initial.update(
                 {
                     "state": "starting",
-                    "message": f"指令已解析为 {target.name}，正在启动 Isaac Sim…",
+                    "message": (
+                        f"{resolution['parser']} 将指令理解为 {target.name}"
+                        f"（置信度 {resolution['confidence']:.2f}），正在启动 Isaac Sim…"
+                    ),
                     "command": command,
                     "task": target.place_id,
+                    "intent_resolution": resolution,
                     "planned_trajectory": [{"x": x, "y": y} for x, y in path],
                     "waypoint_count": max(0, len(path) - 1),
                     "path_length_m": path_length(path),
@@ -216,6 +263,22 @@ class HospitalDashboardSession:
                 json.dumps(initial, ensure_ascii=False, separators=(",", ":")) + "\n",
                 encoding="utf-8",
             )
+            temporary_resolution = self.intent_resolution_path.with_name(
+                f".{self.intent_resolution_path.name}.tmp"
+            )
+            temporary_resolution.write_text(
+                json.dumps(
+                    {
+                        "command": command,
+                        "intent_resolution": resolution,
+                    },
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            temporary_resolution.replace(self.intent_resolution_path)
             log_path = self.output / "isaac.log"
             self._log_stream = log_path.open("ab", buffering=0)
             environment = os.environ.copy()
@@ -228,6 +291,8 @@ class HospitalDashboardSession:
                 "--no-camera",
                 "--command",
                 command,
+                "--target-id",
+                target.place_id,
                 "--map",
                 str(self.map_yaml),
                 "--places",
@@ -251,6 +316,7 @@ class HospitalDashboardSession:
             )
             self._started_at = time.time()
             self._last_command = command
+            self._last_resolution = resolution
         return self.snapshot()
 
     def cancel(self) -> dict:
@@ -388,6 +454,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--port", type=int, default=6006)
     parser.add_argument("--artifacts", type=Path, default=DEFAULT_ARTIFACTS)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
+    parser.add_argument(
+        "--intent-provider",
+        choices=("deepseek", "rule"),
+        default=os.getenv("LLM_PROVIDER", "deepseek"),
+    )
+    parser.add_argument(
+        "--no-rule-fallback",
+        action="store_true",
+        help="Fail startup instead of using exact aliases when the LLM is not configured",
+    )
     return parser.parse_args()
 
 
@@ -398,7 +474,8 @@ def main() -> int:
     server.daemon_threads = True
     server.session = session
     print(f"Hospital dashboard: http://{args.host}:{args.port}")
-    print("Approved commands: 请带我到医院前台 / 请带我到候诊区")
+    print(f"Intent parser: {session.intent_resolver.name}")
+    print("Fuzzy examples: 带我去找个能坐着等医生的地方 / 我想找工作人员问点事情")
     try:
         server.serve_forever()
     except KeyboardInterrupt:

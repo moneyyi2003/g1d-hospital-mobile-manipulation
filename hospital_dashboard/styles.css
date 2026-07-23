@@ -42,7 +42,7 @@ h2 { margin: 0; font-size: 15px; }
 #cameraView { width: 100%; height: 100%; object-fit: contain; display: none; }
 #cameraEmpty { color: #526c62; font-size: 13px; }
 canvas { width: 100%; height: 100%; object-fit: contain; image-rendering: auto; }
-.telemetry { display: grid; grid-template-columns: repeat(6, 1fr); gap: 1px; margin-top: 12px; margin-bottom: 24px; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: var(--line); }
+.telemetry { display: grid; grid-template-columns: repeat(7, 1fr); gap: 1px; margin-top: 12px; margin-bottom: 24px; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: var(--line); }
 .telemetry div { min-width: 0; padding: 12px; background: #0b1815; }
 .telemetry span { display: block; color: #6e9184; font-size: 10px; letter-spacing: .1em; margin-bottom: 5px; }
 .telemetry b { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 600 12px monospace; }

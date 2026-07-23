@@ -4,6 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from hospital_vln.intent import HospitalPlaceResolution
 from hospital_vln.live import LivePublisher, publish_failure
 from scripts.serve_hospital_dashboard import HospitalDashboardSession
 from simple_room_vln.core import Pose2D
@@ -57,6 +58,26 @@ class LivePublisherTest(unittest.TestCase):
 
 
 class HospitalDashboardSessionTest(unittest.TestCase):
+    class FakeIntentResolver:
+        name = "deepseek"
+
+        def resolve(self, command):
+            if "坐着等医生" in command:
+                return HospitalPlaceResolution(
+                    "waiting_area",
+                    "候诊区",
+                    "deepseek",
+                    0.93,
+                    "navigate",
+                )
+            return HospitalPlaceResolution(
+                "reception",
+                "医院前台",
+                "deepseek",
+                0.91,
+                "navigate",
+            )
+
     def test_config_and_plan_use_relocatable_map_assets(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -88,8 +109,26 @@ class HospitalDashboardSessionTest(unittest.TestCase):
                         "aliases": ["前台", "reception"],
                         "status": "approved",
                         "entrance_pose": {"x": 1.0, "y": 0.0, "yaw": 0.0},
+                        "metadata": {
+                            "typical_requests": ["我想找工作人员问点事情"]
+                        },
+                    },
+                    {
+                        "id": "waiting_area",
+                        "name": "候诊区",
+                        "aliases": ["等候区", "waiting area"],
+                        "status": "approved",
+                        "entrance_pose": {"x": -1.0, "y": 0.0, "yaw": 0.0},
+                        "metadata": {
+                            "typical_requests": ["找个能坐着等医生的地方"]
+                        },
                     }
                 ],
+                "map": {
+                    "id": "test-map",
+                    "sha256": "0" * 64,
+                    "frame_id": "map",
+                },
             }
             (artifacts / "places_formal.json").write_text(
                 json.dumps(places, ensure_ascii=False), encoding="utf-8"
@@ -120,18 +159,58 @@ class HospitalDashboardSessionTest(unittest.TestCase):
             (artifacts / "mapping_summary.json").write_text(
                 json.dumps(mapping), encoding="utf-8"
             )
+            live = root / "web-output/live"
+            live.mkdir(parents=True)
+            (live / "state.json").write_text(
+                json.dumps(
+                    {
+                        "state": "succeeded",
+                        "command": "找个能坐着等医生的地方",
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            (root / "web-output/intent_resolution.json").write_text(
+                json.dumps(
+                    {
+                        "command": "找个能坐着等医生的地方",
+                        "intent_resolution": {
+                            "place_id": "waiting_area",
+                            "place_name": "候诊区",
+                            "parser": "deepseek",
+                            "confidence": 0.93,
+                            "intent": "navigate",
+                        },
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
             session = HospitalDashboardSession(
                 argparse.Namespace(
                     artifacts=artifacts,
                     output=root / "web-output",
+                    intent_resolver=self.FakeIntentResolver(),
                 )
             )
 
             config = session.config()
-            target, path = session.plan("go to reception")
+            target, path, resolution = session.plan("找个能坐着等医生的地方")
 
-            self.assertEqual(target.place_id, "reception")
+            self.assertEqual(target.place_id, "waiting_area")
+            self.assertEqual(resolution["parser"], "deepseek")
+            self.assertEqual(resolution["confidence"], 0.93)
             self.assertGreaterEqual(len(path), 2)
+            self.assertEqual(config["intent_parser"], "deepseek")
+            self.assertEqual(
+                session.snapshot()["intent_resolution"]["place_id"],
+                "waiting_area",
+            )
+            self.assertEqual(
+                config["places"][1]["examples"],
+                ["找个能坐着等医生的地方"],
+            )
             self.assertEqual(
                 config["map"]["layers"][0]["asset"],
                 "/asset/map/rgb_pointcloud.png",
