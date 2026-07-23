@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "frame_id": "lingbot_map_local",
+  "places": [
+    {
+      "id": "lingbot_start",
+      "name": "视觉建图起点",
+      "aliases": ["起点", "建图起点", "start"],
+      "entrance_pose": {"x": 0.00131522, "y": -0.0090254, "yaw": 1.570796327},
+      "region": "lingbot_start_region",
+      "metadata": {
+        "habitat_y": -1.60025,
+        "target_type": "semantic_region",
+        "source": "lingbot_predicted_first_camera_pose"
+      }
+    },
+    {
+      "id": "sofa_2",
+      "name": "沙发",
+      "aliases": ["沙发2", "沙发旁边", "sofa", "lounge"],
+      "entrance_pose": {"x": -0.319243689, "y": 1.043787498, "yaw": -2.909419617},
+      "region": "object_instance_sofa_2",
+      "metadata": {
+        "habitat_y": -1.60025,
+        "target_type": "reviewed_object_instance",
+        "semantic_label": "sofa",
+        "instance_id": "sofa_2",
+        "instance_center": {"x": -0.660271398, "y": 0.963156031, "z": 0.443218496},
+        "standoff_m": 0.350430209,
+        "clearance_m": 0.24,
+        "review_image": "outputs/maps/apartment_1_rgb_only_instances/reviews/sofa_2.png",
+        "verification": {
+          "status": "accepted",
+          "reviewer": "rgb-only-instance-review",
+          "evidence": ["LingBot RGB prediction + OWLv2/SAM2 crop confirms sofa instance"]
+        },
+        "provenance": {
+          "candidate_artifact": "outputs/maps/apartment_1_rgb_only_instances/place_candidates.json",
+          "geometry_backend": "lingbot_map_rgb_only+owlv2+sam2",
+          "ground_truth_inputs": false
+        }
+      }
+    }
+  ]
+}

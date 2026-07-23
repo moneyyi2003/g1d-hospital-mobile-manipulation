@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>LingBot Navigation</title>
+  <link rel="stylesheet" href="/styles.css" />
+  <link rel="stylesheet" href="/object.css" />
+  <link rel="stylesheet" href="/map_layers.css" />
+</head>
+<body>
+  <header>
+    <div class="brand"><b>L</b><div><strong id="appName">LingBot Navigation</strong><span id="appSubtitle">WHEELED ROBOT NAVIGATION</span></div></div>
+    <div id="backendStatus" class="online"><i></i>NAVIGATION READY</div>
+  </header>
+  <main>
+    <section class="visual panel">
+      <div class="titlebar">
+        <div><small id="navigationSource">RGB ONLY · LINGBOT OCCUPANCY</small><h1>重建地图导航轨迹</h1></div>
+        <span id="stateBadge" class="badge idle">IDLE</span>
+      </div>
+      <div id="mapTabs" class="map-tabs" aria-label="地图类型"></div>
+      <div class="views">
+        <div class="map-wrap">
+          <canvas id="mapCanvas"></canvas>
+          <div id="mapDescription" class="map-description"></div>
+          <div class="compass">N<i></i></div>
+          <div class="legend"><span><i class="region"></i>区域</span><span><i class="candidate"></i>RGB 物品</span><span><i class="traveled"></i>执行轨迹</span><span><i class="planned"></i>LingBot A* 路线</span><span><i class="target"></i>目标</span></div>
+        </div>
+        <div class="camera-wrap">
+          <img id="cameraView" alt="RGB 输入画面" />
+          <div id="cameraEmpty">等待 RGB 输入画面</div>
+          <span id="cameraLabel">RGB INPUT</span>
+        </div>
+      </div>
+      <div class="coordinates"><span id="coordinates">x — · z — · yaw —</span><span id="sceneName">Habitat scene</span></div>
+    </section>
+
+    <aside>
+      <section class="panel command">
+        <small>输入导航指令</small>
+        <form id="commandForm">
+          <div class="input-row"><input id="commandInput" maxlength="300" placeholder="例如：请带我到用餐区域 / 椅子" autofocus /><button id="micButton" type="button" title="语音输入">●</button></div>
+          <div class="actions"><button id="cancelButton" type="button">停止</button><button id="submitButton" class="primary" type="submit">运行机器人 →</button></div>
+        </form>
+        <p id="speechHint">可输入文字，也可以点击圆点说话</p>
+        <div id="examples" class="examples"></div>
+      </section>
+
+      <section class="panel telemetry">
+        <div class="heading"><small>实时状态</small><span id="elapsed">0.0 s</span></div>
+        <h2 id="message">正在载入 LingBot 重建地图…</h2>
+        <div class="destination"><span>目标地点</span><strong id="destination">—</strong></div>
+        <div id="objectEvidence" class="object-evidence" hidden>
+          <img id="objectReview" alt="已审核物品实例证据" />
+          <div><small id="objectEvidenceType">VERIFIED OBJECT INSTANCE</small><strong id="objectLabel">—</strong><span id="objectGeometry">—</span></div>
+        </div>
+        <div id="pipeline" class="pipeline"></div>
+        <div id="route" class="route"></div>
+        <div class="metrics">
+          <div><span>当前动作</span><strong id="action">—</strong></div>
+          <div><span>线速度 v</span><strong id="linearVelocity">0.00 m/s</strong></div>
+          <div><span>角速度 ω</span><strong id="angularVelocity">0.00 rad/s</strong></div>
+          <div><span>剩余直线距离</span><strong id="distance">—</strong></div>
+          <div><span>RGB 帧</span><strong id="frame">0</strong></div>
+          <div><span>碰撞</span><strong id="collisions">0</strong></div>
+        </div>
+      </section>
+
+      <section class="panel places-panel">
+        <div class="heading"><small>场景地点</small><span id="placeCount">0</span></div>
+        <div id="places" class="places"></div>
+        <div class="candidate-heading"><small>RGB 识别区域</small><span id="regionCount">0</span></div>
+        <div id="regions" class="regions"></div>
+        <div class="candidate-heading"><small>RGB 识别且基于重建地图校验的物品</small><span id="candidateCount">0</span></div>
+        <div id="candidates" class="candidates"></div>
+      </section>
+    </aside>
+  </main>
+  <script src="/app.js" defer></script>
+</body>
+</html>

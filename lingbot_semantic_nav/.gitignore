@@ -1,0 +1,23 @@
+.env
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# Official upstream checkouts are reproducible from config/upstreams.lock.json.
+third_party/*
+!third_party/.gitkeep
+
+# Generated model and ROS artifacts.
+outputs/
+ros2_ws/build/
+ros2_ws/install/
+ros2_ws/log/
+
+# Model checkpoints are licensed/distributed separately.
+checkpoints/
+*.pt
+*.pth
+*.ckpt
+

@@ -1,0 +1,58 @@
+# Local machine state and credentials
+/.autodl/
+/.cache/
+/.claude/
+/.conda/
+/.tmp/
+/.npmrc-omniverse
+**/.env
+**/.env.*
+!**/.env.example
+
+# Installed runtimes, environments, downloads, and model weights
+/Downloads/
+/checkpoints/
+/envs/
+/isaacsim/
+/mihomo/
+
+# Generated simulation assets and source meshes
+/Assets/
+/g1_d_description/meshes/
+*.usd
+*.usda
+*.usdc
+*.STL
+*.stl
+*.glb
+
+# Generated output, recordings, caches, and logs
+/outputs/
+/logs/
+/NvStreamer-*.etli
+**/outputs/
+**/__pycache__/
+*.py[cod]
+*.log
+*.gif
+*.png
+*.npy
+*.npz
+*.pgm
+*.ply
+*.pt
+*.pth
+*.zip
+
+# Build and package artifacts
+**/node_modules/
+**/dist/
+**/build/
+**/install/
+**/*.egg-info/
+
+# Large downloaded datasets and vendored upstream repositories
+/lingbot_semantic_nav/data/habitat_assets/
+/lingbot_semantic_nav/data/habitat/**/rgb/
+/lingbot_semantic_nav/data/habitat/**/depth/
+/lingbot_semantic_nav/third_party/

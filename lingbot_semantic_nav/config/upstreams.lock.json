@@ -1,0 +1,57 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-07-17",
+  "repositories": [
+    {
+      "name": "lingbot-map",
+      "url": "https://github.com/robbyant/lingbot-map.git",
+      "commit": "7ff6f3ed0913d4d326f8f13bbb429c4ffc0195c2",
+      "ref": "main",
+      "license": "Apache-2.0",
+      "checkout": "third_party/lingbot-map",
+      "group": "models",
+      "sparse_paths": ["lingbot_map", "demo.py", "pyproject.toml", "LICENSE.txt", "README.md"]
+    },
+    {
+      "name": "sam3",
+      "url": "https://github.com/facebookresearch/sam3.git",
+      "commit": "46957e47805eaa273f4aa7bbbd25a88bca9108ce",
+      "ref": "main",
+      "release": "SAM 3.1",
+      "license": "SAM License",
+      "checkout": "third_party/sam3",
+      "group": "models",
+      "sparse_paths": ["sam3", "scripts", "examples", "pyproject.toml", "LICENSE", "README.md", "RELEASE_SAM3p1.md"]
+    },
+    {
+      "name": "navigation2",
+      "url": "https://github.com/ros-navigation/navigation2.git",
+      "commit": "3c3db59d6969d8ecee8e68468693d006397f4a0c",
+      "ref": "humble",
+      "license": "Apache-2.0",
+      "checkout": "third_party/navigation2",
+      "group": "ros",
+      "install": "Prefer ROS 2 Humble binary packages; this source lock is for audit and source builds."
+    },
+    {
+      "name": "habitat-sim",
+      "url": "https://github.com/facebookresearch/habitat-sim.git",
+      "commit": "acbe6f4922e68145e401e55c30f9dfea460a3f24",
+      "ref": "v0.3.3",
+      "license": "MIT",
+      "checkout": "third_party/habitat-sim",
+      "group": "simulation",
+      "install": "Use the official habitat-sim 0.3.3 package in a separate environment."
+    },
+    {
+      "name": "turtlebot3-simulations",
+      "url": "https://github.com/ROBOTIS-GIT/turtlebot3_simulations.git",
+      "commit": "a35a56c8b04877dc89772b598084d8ce648a9023",
+      "ref": "humble",
+      "license": "Apache-2.0",
+      "checkout": "third_party/turtlebot3_simulations",
+      "group": "simulation",
+      "install": "Prefer the official ROS 2 Humble package for Gazebo Classic physics simulation."
+    }
+  ]
+}

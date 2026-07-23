@@ -1,0 +1,3 @@
+[submodule "MobileManiBench"]
+	path = MobileManiBench
+	url = https://github.com/DexHand/MobileManiBench.git

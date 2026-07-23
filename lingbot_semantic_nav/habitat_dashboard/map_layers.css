@@ -1,0 +1,10 @@
+.map-tabs { display: flex; gap: 7px; padding: 9px 18px; border-bottom: 1px solid var(--line); background: rgba(5, 15, 20, .55); }
+.map-tabs button { padding: 7px 11px; border: 1px solid var(--line); border-radius: 8px; color: #819ba4; background: #09171e; cursor: pointer; font-size: .62rem; font-weight: 750; letter-spacing: .03em; }
+.map-tabs button:hover { color: var(--text); border-color: rgba(25, 210, 215, .35); }
+.map-tabs button.active { color: #061015; border-color: var(--cyan); background: var(--cyan); box-shadow: 0 0 13px rgba(25, 210, 215, .2); }
+.map-description { position: absolute; left: 18px; top: 16px; z-index: 2; max-width: calc(100% - 90px); padding: 5px 7px; border-radius: 6px; color: #91aab3; background: rgba(3, 10, 14, .78); font-size: .55rem; letter-spacing: .04em; }
+@media(max-width: 520px) {
+  .map-tabs { padding: 8px; gap: 4px; overflow-x: auto; }
+  .map-tabs button { flex: 0 0 auto; padding: 6px 8px; }
+  .map-description { left: 10px; top: 10px; }
+}

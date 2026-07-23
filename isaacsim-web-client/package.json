@@ -1,0 +1,39 @@
+{
+  "name": "isaacsim-web-client",
+  "version": "0.0.1",
+  "description": "Simple viewport sample that streams a local Kit application.",
+  "author": "Nvidia",
+  "license": "SEE LICENSE IN LICENSE.txt",
+  "private": true,
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "build:docs": "npx typedoc",
+    "format": "npx prettier --write \"src/**/*.{ts,tsx,css}\"",
+    "format:check": "prettier --check \"src/**/*.{ts,tsx,css}\"",
+    "test": "mocha --require ts-node/register 'src/tests/**/*.{ts,tsx}'"
+  },
+  "dependencies": {
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "@nvidia/ov-web-rtc": "6.2.2"
+  },
+  "devDependencies": {
+    "@types/chai": "^5.2.0",
+    "@types/mocha": "^10.0.6",
+    "@types/react": "^18.2.0",
+    "@types/react-dom": "^18.2.0",
+    "@vitejs/plugin-react": "^4.3.4",
+    "chai": "^5.2.0",
+    "mocha": "^10.2.0",
+    "prettier": "^3.5.3",
+    "prettier-plugin-brace-style": "^0.7.2",
+    "ts-node": "^10.9.2",
+    "typedoc": "^0.27.8",
+    "vite": "^6.2.0"
+  },
+  "engines": {
+    "node": ">=20.0.0",
+    "npm": ">=10.0.0"
+  }
+}

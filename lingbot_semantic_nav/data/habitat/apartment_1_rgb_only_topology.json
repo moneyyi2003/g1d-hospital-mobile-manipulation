@@ -1,0 +1,7 @@
+{
+  "schema_version": 1,
+  "nodes": ["lingbot_start", "sofa_2"],
+  "edges": [
+    {"from": "lingbot_start", "to": "sofa_2"}
+  ]
+}

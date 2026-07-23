@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lingbot-semantic-nav"
+version = "0.1.0"
+description = "Open-vocabulary semantic place navigation with reviewed instance goals and Nav2"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "Apache-2.0"}
+authors = [{name = "Semantic navigation workspace"}]
+dependencies = []
+
+[project.optional-dependencies]
+mapping = ["numpy>=1.26,<2.0"]
+semantic = ["numpy>=1.26,<2.0", "Pillow>=10", "scipy>=1.10"]
+habitat = [
+  "habitat-sim==0.3.3",
+  "numpy>=2.0,<2.4",
+  "numpy-quaternion>=2024.0.13",
+  "Pillow==10.4.0",
+]
+dev = []
+
+[project.scripts]
+lingbot-nav = "lingbot_nav.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

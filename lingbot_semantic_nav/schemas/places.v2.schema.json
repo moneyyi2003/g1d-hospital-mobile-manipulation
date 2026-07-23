@@ -1,0 +1,97 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://lingbot.local/schemas/places.v2.schema.json",
+  "title": "Reviewed semantic navigation place catalog",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "map", "places"],
+  "properties": {
+    "schema_version": {"const": 2},
+    "map": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "sha256", "frame_id"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "frame_id": {"const": "map"}
+      }
+    },
+    "places": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/place"}
+    }
+  },
+  "$defs": {
+    "pose": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["x", "y", "yaw", "frame_id"],
+      "properties": {
+        "x": {"type": "number"},
+        "y": {"type": "number"},
+        "yaw": {"type": "number"},
+        "frame_id": {"const": "map"}
+      }
+    },
+    "candidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "pose", "checks", "review"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "pose": {"$ref": "#/$defs/pose"},
+        "checks": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["clearance_m", "footprint_radius_m", "occupancy_status", "reachable"],
+          "properties": {
+            "clearance_m": {"type": "number", "minimum": 0},
+            "footprint_radius_m": {"type": "number", "exclusiveMinimum": 0},
+            "occupancy_status": {"enum": ["free", "occupied", "unknown", "outside"]},
+            "reachable": {"type": "boolean"}
+          }
+        },
+        "review": {
+          "type": "object",
+          "required": ["status"],
+          "properties": {
+            "status": {"enum": ["pending", "accepted", "rejected"]},
+            "reviewer": {"type": "string"},
+            "evidence": {"type": "array", "items": {"type": "string"}}
+          }
+        }
+      }
+    },
+    "place": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name", "aliases", "status", "target", "docking_candidates", "selected_docking_candidate"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "name": {"type": "string", "minLength": 1},
+        "aliases": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+        "status": {"enum": ["candidate", "approved", "rejected", "stale"]},
+        "target": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "source_id"],
+          "properties": {
+            "type": {"enum": ["sam3_instance", "semantic_region", "fixed_safe_pose"]},
+            "source_id": {"type": "string", "minLength": 1}
+          }
+        },
+        "region": {"type": "string"},
+        "docking_candidates": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/candidate"}},
+        "selected_docking_candidate": {"type": "string"},
+        "metadata": {"type": "object"}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"status": {"const": "approved"}}},
+          "then": {"properties": {"selected_docking_candidate": {"minLength": 1}}}
+        }
+      ]
+    }
+  }
+}
