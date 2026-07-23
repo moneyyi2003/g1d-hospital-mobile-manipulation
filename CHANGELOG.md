@@ -24,6 +24,10 @@
 - 从 `outputs/hospital_vln/physics_probe/run_summary.json` 核对纯轮地物理模式失败：
   300 帧、位置误差 4.941 m。
 - 用 `nvidia-smi`、各环境 Python 和 `isaacsim/VERSION` 核对当前运行环境。
+- Hospital 轻量测试 2/2 通过，`lingbot_semantic_nav` 单元测试 21/21 通过，
+  G1-D 工具脚本语法检查通过。
+- `isaacsim-web-client` 生产构建通过；仅有单个 bundle 大于 500 kB 的 Vite 性能提示。
+- 根仓库基线提交：`0896392`；MobileManiBench 子模块提交：`28422ba`。
 
 已知限制：
 
