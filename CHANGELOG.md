@@ -5,6 +5,24 @@
 
 ## 2026-07-23
 
+### 6009 合并区域语义导航与物体精确停靠
+
+- 6009 从单一物体停靠升级为统一自然语言入口：命中物体目录时解析 object/standoff，
+  否则复用 6006 的 `HospitalIntentResolver` 和正式地点库执行受约束区域导航；不修改
+  6006 服务。
+- 前端增加任务类型、语言解析结果、统一目标位姿和区域指令快捷项；两类任务共用实时
+  chase camera、LingBot/occupancy 地图、规划路径和实际轨迹。
+- 任务状态显式记录 `semantic_region_navigation` 或 `object_relative_docking`；
+  区域导航使用正式地点 docking pose，物体导航继续使用 footprint/occupancy 验证后的
+  参数化 SE(2) 位姿和 3 cm 阈值。
+
+验证：
+
+- 真实 DeepSeek 将“我累了，带我去坐下”解析为 `waiting_area`，置信度 0.90；
+  从 6009 API 启动 Isaac 后 1092 帧成功，路径 7.376 m、位置误差 0.119 m、
+  朝向误差 0.117 rad，MJPEG 实时流正常。
+- 统一路由单元测试覆盖同一页面的模糊区域指令和物体距离指令；相关轻量回归通过。
+
 ### 物体级精确停靠实时控制台
 
 - 新增独立 `hospital-object-web` / 6009 控制台；浏览器可提交包含不同物体和距离的

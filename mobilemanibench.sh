@@ -112,7 +112,7 @@ case "${command_name}" in
         echo "  hospital-web     Serve the TCP-only Hospital live dashboard (default port 6006)."
         echo "  hospital-docking Build isolated experimental multi-chair docking candidates."
         echo "  hospital-object-docking Run the isolated object-relative precision docking demo."
-        echo "  hospital-object-web Serve the interactive object-relative docking dashboard (port 6009)."
+        echo "  hospital-object-web Serve unified semantic-region/object docking live UI (port 6009)."
         echo "  doctor       Check Python, GPU, robot, USD, and official assets."
         echo "  convert-urdf Convert g1_d_description/g1_d.urdf to USD."
         echo "  python       Run a Python command inside the pinned environment."

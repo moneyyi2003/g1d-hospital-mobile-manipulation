@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Serve an interactive object-relative docking dashboard on a separate port."""
+"""Serve unified semantic-region navigation and object docking on a separate port."""
 
 from __future__ import annotations
 
@@ -23,6 +23,7 @@ DEFAULT_SCENES = ROOT / "hospital_vln/object_docking_scenes.json"
 sys.path.insert(0, str(ROOT))
 
 from hospital_vln.artifacts import HOSPITAL_START  # noqa: E402
+from hospital_vln.intent import HospitalIntentResolver  # noqa: E402
 from hospital_vln.object_docking import (  # noqa: E402
     ObjectDockingPlan,
     ObjectTarget,
@@ -31,6 +32,8 @@ from hospital_vln.object_docking import (  # noqa: E402
     parse_standoff,
     resolve_object,
 )
+from simple_room_vln.artifacts import load_lingbot_artifacts  # noqa: E402
+from simple_room_vln.core import GridMap, Place, Pose2D, path_length  # noqa: E402
 
 
 def _read_json(path: Path) -> dict:
@@ -58,11 +61,14 @@ class SceneProfile:
     name: str
     runner: str
     map_yaml: Path
-    places: Path
+    places_path: Path
     mapping_summary: Path
     objects_path: Path
     output: Path
     objects: tuple[ObjectTarget, ...]
+    grid: GridMap
+    places: tuple[Place, ...]
+    place_payload: dict
     mapping: dict
     map_assets: dict[str, Path]
 
@@ -111,16 +117,20 @@ def load_scene_profiles(path: Path) -> tuple[str, dict[str, SceneProfile]]:
                 + ", ".join(missing_layers)
             )
         objects = tuple(load_object_targets(objects_path))
+        grid, loaded_places = load_lingbot_artifacts(map_yaml, places)
         profiles[scene_id] = SceneProfile(
             scene_id=scene_id,
             name=str(value["name"]),
             runner=runner,
             map_yaml=map_yaml,
-            places=places,
+            places_path=places,
             mapping_summary=mapping_summary,
             objects_path=objects_path,
             output=output,
             objects=objects,
+            grid=grid,
+            places=tuple(loaded_places),
+            place_payload=_read_json(places),
             mapping=mapping,
             map_assets=map_assets,
         )
@@ -145,6 +155,7 @@ class ObjectDockingSession:
         self._last_command = ""
         self._last_plan: dict | None = None
         self._last_target: dict | None = None
+        self._last_mission: dict | None = None
         self.live_fps = int(args.live_fps)
         self.live_resolution = str(args.live_resolution)
         if not 1 <= self.live_fps <= 30:
@@ -165,12 +176,40 @@ class ObjectDockingSession:
                     "interaction_face_yaw": target.get("interaction_face_yaw", 0.0),
                     "size_m": target.get("size_m", 0.0),
                 }
+                self._last_mission = {
+                    "mode": "object_relative_docking",
+                    "task_id": target["object_id"],
+                    "target_name": target.get("name", target["object_id"]),
+                    "target_pose": previous_plan.get("docking_pose"),
+                    "path_length_m": previous_plan.get("path_length_m"),
+                    "docking_plan": previous_plan,
+                    "object_target": self._last_target,
+                    "intent_resolution": None,
+                }
+        try:
+            previous_mission = _read_json(default_profile.output / "mission.json")
+        except (OSError, ValueError, json.JSONDecodeError):
+            previous_mission = None
+        if isinstance(previous_mission, dict) and previous_mission.get("mode"):
+            self._last_mission = previous_mission
+            self._last_plan = previous_mission.get("docking_plan")
+            self._last_target = previous_mission.get("object_target")
         try:
             previous_state = _read_json(default_profile.output / "live/state.json")
         except (OSError, ValueError, json.JSONDecodeError):
             previous_state = None
         if isinstance(previous_state, dict):
             self._last_command = str(previous_state.get("command", ""))
+        supplied_resolvers = getattr(args, "intent_resolvers", {})
+        self.intent_resolvers = {
+            scene_id: supplied_resolvers.get(scene_id)
+            or HospitalIntentResolver(
+                profile.places_path,
+                provider=getattr(args, "intent_provider", "rule"),
+                allow_rule_fallback=not getattr(args, "no_rule_fallback", False),
+            )
+            for scene_id, profile in self.profiles.items()
+        }
 
     def _profile(self, scene_id: str | None) -> SceneProfile:
         key = (scene_id or self.default_scene_id).strip()
@@ -213,11 +252,23 @@ class ObjectDockingSession:
                     "runner": profile.runner,
                     "map": map_config,
                     "objects": [self._target_payload(item) for item in profile.objects],
+                    "places": [
+                        {
+                            "id": item["id"],
+                            "name": item["name"],
+                            "aliases": item.get("aliases", []),
+                            "examples": item.get("metadata", {}).get("typical_requests", []),
+                            "pose": item.get("entrance_pose", {}),
+                        }
+                        for item in profile.place_payload.get("places", [])
+                        if item.get("status") == "approved"
+                    ],
+                    "intent_parser": self.intent_resolvers[profile.scene_id].name,
                 }
             )
         return {
             "schema_version": 1,
-            "mode": "interactive_object_relative_docking",
+            "mode": "unified_semantic_navigation_and_object_docking",
             "default_scene_id": self.default_scene_id,
             "scenes": scenes,
             "camera_stream": "/stream/camera.mjpg",
@@ -238,11 +289,78 @@ class ObjectDockingSession:
         plan = build_object_docking_plan(profile.map_yaml, target, standoff_m)
         return profile, plan
 
+    @staticmethod
+    def _matches_object(command: str, targets: tuple[ObjectTarget, ...]) -> bool:
+        normalized = command.casefold().strip()
+        return any(
+            alias.casefold() in normalized
+            for target in targets
+            for alias in (target.object_id, target.name, *target.aliases)
+        )
+
+    def resolve_mission(self, command: str, scene_id: str | None = None) -> tuple[SceneProfile, dict]:
+        command = command.strip()
+        if not command:
+            raise ValueError("请输入导航或物体级停靠指令")
+        profile = self._profile(scene_id)
+        if self._matches_object(command, profile.objects):
+            _, plan = self.plan(command, profile.scene_id)
+            target_payload = self._target_payload(plan.target)
+            return profile, {
+                "mode": "object_relative_docking",
+                "task_id": plan.target.object_id,
+                "simulator_target_id": "waiting_area",
+                "target_name": plan.target.name,
+                "target_pose": {
+                    "x": plan.docking_pose.x,
+                    "y": plan.docking_pose.y,
+                    "yaw": plan.docking_pose.yaw,
+                },
+                "path": [{"x": x, "y": y} for x, y in plan.path],
+                "path_length_m": plan.path_length_m,
+                "docking_plan": plan.to_dict(),
+                "object_target": target_payload,
+                "intent_resolution": None,
+            }
+
+        resolution = self.intent_resolvers[profile.scene_id].resolve(command)
+        places = {place.place_id: place for place in profile.places}
+        target = places.get(resolution.place_id)
+        if target is None:
+            raise ValueError(f"语义解析结果不在当前场景地点库中：{resolution.place_id}")
+        path = profile.grid.plan(
+            (HOSPITAL_START.x, HOSPITAL_START.y),
+            (target.pose.x, target.pose.y),
+        )
+        intent_resolution = {
+            "place_id": resolution.place_id,
+            "place_name": resolution.place_name,
+            "parser": resolution.parser,
+            "confidence": resolution.confidence,
+            "intent": resolution.intent,
+        }
+        return profile, {
+            "mode": "semantic_region_navigation",
+            "task_id": target.place_id,
+            "simulator_target_id": target.place_id,
+            "target_name": target.name,
+            "target_pose": {
+                "x": target.pose.x,
+                "y": target.pose.y,
+                "yaw": target.pose.yaw,
+            },
+            "path": [{"x": x, "y": y} for x, y in path],
+            "path_length_m": path_length(path),
+            "docking_plan": None,
+            "object_target": None,
+            "intent_resolution": intent_resolution,
+        }
+
     def _idle_state(self) -> dict:
         return {
             "schema_version": 1,
             "state": "idle",
-            "message": "选择场景并输入物体级停靠指令。",
+            "message": "选择场景并输入区域导航或物体级停靠指令。",
             "command": self._last_command,
             "scene_id": self._active_scene_id,
             "task": None,
@@ -260,8 +378,14 @@ class ObjectDockingSession:
             "planned_trajectory": [],
             "trajectory": [],
             "result": None,
+            "mission": self._last_mission,
             "docking_plan": self._last_plan,
             "object_target": self._last_target,
+            "intent_resolution": (
+                self._last_mission.get("intent_resolution")
+                if self._last_mission is not None
+                else None
+            ),
             "elapsed_sec": 0.0,
             "process_running": False,
         }
@@ -281,8 +405,14 @@ class ObjectDockingSession:
             state = self._idle_state()
         state["scene_id"] = profile.scene_id
         state["process_running"] = running
+        state["mission"] = self._last_mission
         state["docking_plan"] = self._last_plan
         state["object_target"] = self._last_target
+        state["intent_resolution"] = (
+            self._last_mission.get("intent_resolution")
+            if self._last_mission is not None
+            else None
+        )
         state["elapsed_sec"] = max(0.0, time.time() - started_at) if started_at else 0.0
         if process is not None and not running and state.get("state") in {"starting", "loading", "running"}:
             state["state"] = "failed"
@@ -308,11 +438,11 @@ class ObjectDockingSession:
     def submit(self, command: str, scene_id: str | None = None) -> dict:
         with self._lock:
             if self._process is not None and self._process.poll() is None:
-                raise ValueError("已有物体停靠任务正在运行，请先等待或停止任务")
-        profile, plan = self.plan(command, scene_id)
+                raise ValueError("已有导航任务正在运行，请先等待或停止任务")
+        profile, mission = self.resolve_mission(command, scene_id)
         with self._lock:
             if self._process is not None and self._process.poll() is None:
-                raise ValueError("已有物体停靠任务正在运行，请先等待或停止任务")
+                raise ValueError("已有导航任务正在运行，请先等待或停止任务")
             kit_pids = self._other_kit_processes()
             if kit_pids:
                 raise ValueError(
@@ -328,26 +458,39 @@ class ObjectDockingSession:
                 stale = live_dir / name
                 if stale.exists():
                     stale.unlink()
-            plan_payload = plan.to_dict()
-            target_payload = self._target_payload(plan.target)
-            _atomic_json(output / "docking_plan.json", plan_payload)
+            plan_payload = mission["docking_plan"]
+            target_payload = mission["object_target"]
+            if plan_payload is not None:
+                _atomic_json(output / "docking_plan.json", plan_payload)
+            _atomic_json(output / "mission.json", mission)
+            if mission["mode"] == "object_relative_docking":
+                message = (
+                    f"已解析 {mission['target_name']}，目标距离 "
+                    f"{plan_payload['constraint']['requested_standoff_m']:.2f} m；"
+                    "停靠位姿通过 footprint、occupancy 与可达性检查，正在启动 Isaac Sim…"
+                )
+            else:
+                resolution = mission["intent_resolution"]
+                message = (
+                    f"{resolution['parser']} 将指令理解为 {mission['target_name']}"
+                    f"（置信度 {resolution['confidence']:.2f}），正在启动 Isaac Sim…"
+                )
             initial = self._idle_state()
             initial.update(
                 {
                     "state": "starting",
-                    "message": (
-                        f"已解析 {plan.target.name}，目标距离 {plan.requested_standoff_m:.2f} m；"
-                        "停靠位姿通过 footprint、occupancy 与可达性检查，正在启动 Isaac Sim…"
-                    ),
+                    "message": message,
                     "command": command.strip(),
                     "scene_id": profile.scene_id,
-                    "task": plan.target.object_id,
+                    "task": mission["task_id"],
                     "action": "starting",
-                    "planned_trajectory": [{"x": x, "y": y} for x, y in plan.path],
-                    "waypoint_count": max(0, len(plan.path) - 1),
-                    "path_length_m": plan.path_length_m,
+                    "planned_trajectory": mission["path"],
+                    "waypoint_count": max(0, len(mission["path"]) - 1),
+                    "path_length_m": mission["path_length_m"],
+                    "mission": mission,
                     "docking_plan": plan_payload,
                     "object_target": target_payload,
+                    "intent_resolution": mission["intent_resolution"],
                     "process_running": True,
                 }
             )
@@ -357,8 +500,6 @@ class ObjectDockingSession:
             environment = os.environ.copy()
             environment.setdefault("OMNI_KIT_ACCEPT_EULA", "YES")
             environment.setdefault("OMNI_KIT_ALLOW_ROOT", "1")
-            pose = plan.docking_pose
-            target = plan.target
             argv = [
                 str(ROOT / "isaacsim/python.sh"),
                 str(ROOT / "run_g1d_hospital_vln.py"),
@@ -367,15 +508,11 @@ class ObjectDockingSession:
                 "--command",
                 command.strip(),
                 "--target-id",
-                "waiting_area",
-                f"--dynamic-docking-pose={pose.x},{pose.y},{pose.yaw}",
-                f"--demo-object-pose={target.x},{target.y},{target.z}",
-                "--demo-object-size",
-                str(target.size_m),
+                mission["simulator_target_id"],
                 "--map",
                 str(profile.map_yaml),
                 "--places",
-                str(profile.places),
+                str(profile.places_path),
                 "--output-dir",
                 str(output),
                 "--live-dir",
@@ -384,11 +521,22 @@ class ObjectDockingSession:
                 str(self.live_fps),
                 "--live-resolution",
                 self.live_resolution,
-                "--position-tolerance",
-                "0.03",
-                "--yaw-tolerance",
-                "0.05",
             ]
+            if mission["mode"] == "object_relative_docking":
+                pose = mission["target_pose"]
+                target = target_payload["position"]
+                argv.extend(
+                    [
+                        f"--dynamic-docking-pose={pose['x']},{pose['y']},{pose['yaw']}",
+                        f"--demo-object-pose={target['x']},{target['y']},{target['z']}",
+                        "--demo-object-size",
+                        str(target_payload["size_m"]),
+                        "--position-tolerance",
+                        "0.03",
+                        "--yaw-tolerance",
+                        "0.05",
+                    ]
+                )
             self._process = subprocess.Popen(
                 argv,
                 cwd=ROOT,
@@ -402,6 +550,7 @@ class ObjectDockingSession:
             self._last_command = command.strip()
             self._last_plan = plan_payload
             self._last_target = target_payload
+            self._last_mission = mission
         return self.snapshot()
 
     def cancel(self) -> dict:
@@ -414,7 +563,7 @@ class ObjectDockingSession:
                 state.update(
                     {
                         "state": "canceled",
-                        "message": "已请求停止物体级精确停靠任务。",
+                        "message": "已请求停止当前导航任务。",
                         "action": "canceled",
                     }
                 )
@@ -547,6 +696,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--scenes", type=Path, default=DEFAULT_SCENES)
     parser.add_argument("--live-fps", type=int, default=10)
     parser.add_argument("--live-resolution", default="960x540")
+    parser.add_argument(
+        "--intent-provider",
+        choices=("deepseek", "rule"),
+        default=os.getenv("LLM_PROVIDER", "deepseek"),
+    )
+    parser.add_argument(
+        "--no-rule-fallback",
+        action="store_true",
+        help="Require the configured LLM for fuzzy region commands",
+    )
     return parser.parse_args()
 
 
@@ -557,7 +716,7 @@ def main() -> int:
     server.daemon_threads = True
     server.session = session
     print(f"Object docking dashboard: http://{args.host}:{args.port}")
-    print("Commands may change object and standoff distance; scenes come from the profile registry.")
+    print("Unified commands: fuzzy semantic-region navigation or object-relative docking.")
     try:
         server.serve_forever()
     except KeyboardInterrupt:

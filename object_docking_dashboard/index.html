@@ -9,8 +9,8 @@
   <body>
     <header>
       <div>
-        <p class="eyebrow">ISAAC SIM 6 · OBJECT-RELATIVE DOCKING · TCP LIVE</p>
-        <h1>G1-D 物体级精确停靠</h1>
+        <p class="eyebrow">ISAAC SIM 6 · SEMANTIC NAV + OBJECT DOCKING · TCP LIVE</p>
+        <h1>G1-D 统一语义导航控制台</h1>
       </div>
       <span id="stateBadge" class="badge idle">IDLE</span>
     </header>
@@ -23,12 +23,12 @@
             <select id="sceneSelect"></select>
           </div>
           <div class="command-control">
-            <label for="commandInput">物体级停靠指令（物体和距离均可修改）</label>
+            <label for="commandInput">自然语言指令（自动识别区域导航或物体精确停靠）</label>
             <input
               id="commandInput"
               autocomplete="off"
-              value="请停到红色方块前0.8米"
-              placeholder="例如：请停到红色方块前0.6米"
+              value="我累了，带我去坐下"
+              placeholder="例如：我想找地方休息 / 请停到红色方块前0.6米"
             >
           </div>
           <button id="submitButton" type="submit">启动实时仿真</button>
@@ -38,7 +38,7 @@
       <div id="exampleChips" class="chips"></div>
       <p id="message">正在连接物体级停靠控制台…</p>
       <p class="scope-note">
-        场景列表来自服务器 profile；只有具备地图、物体目录和对应 runner 的场景才会显示。
+        模糊区域意图使用与 6006 相同的受地点库约束解析；包含具体物体的指令进入精确停靠。
       </p>
     </section>
 
@@ -80,9 +80,11 @@
 
     <section class="telemetry">
       <div><span>场景</span><b id="scene">—</b></div>
-      <div><span>目标物体</span><b id="target">—</b></div>
-      <div><span>请求距离</span><b id="distance">—</b></div>
-      <div><span>计算停靠位姿</span><b id="dockPose">—</b></div>
+      <div><span>任务类型</span><b id="missionMode">—</b></div>
+      <div><span>解析目标</span><b id="target">—</b></div>
+      <div><span>语言理解</span><b id="intent">—</b></div>
+      <div><span>距离约束</span><b id="distance">—</b></div>
+      <div><span>目标位姿</span><b id="dockPose">—</b></div>
       <div><span>机器人位姿</span><b id="robotPose">—</b></div>
       <div><span>动作</span><b id="action">—</b></div>
       <div><span>航点</span><b id="waypoint">—</b></div>

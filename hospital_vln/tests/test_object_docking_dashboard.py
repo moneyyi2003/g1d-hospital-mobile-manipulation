@@ -7,10 +7,23 @@ from pathlib import Path
 import tempfile
 import unittest
 
+from hospital_vln.intent import HospitalPlaceResolution
 from scripts.serve_object_docking_dashboard import ObjectDockingSession
 
 
 class ObjectDockingDashboardTest(unittest.TestCase):
+    class FakeIntentResolver:
+        name = "deepseek"
+
+        def resolve(self, command: str) -> HospitalPlaceResolution:
+            return HospitalPlaceResolution(
+                "waiting_area",
+                "候诊区",
+                "deepseek",
+                0.96,
+                "navigate",
+            )
+
     def _session(self, root: Path) -> ObjectDockingSession:
         map_dir = root / "map"
         preview = root / "map_preview"
@@ -55,7 +68,36 @@ class ObjectDockingDashboardTest(unittest.TestCase):
         mapping_path = root / "mapping_summary.json"
         mapping_path.write_text(json.dumps(mapping), encoding="utf-8")
         places_path = root / "places.json"
-        places_path.write_text("{}", encoding="utf-8")
+        places_path.write_text(
+            json.dumps(
+                {
+                    "schema_version": 2,
+                    "map": {
+                        "id": "test-map",
+                        "sha256": "0" * 64,
+                        "frame_id": "map",
+                    },
+                    "places": [
+                        {
+                            "id": "waiting_area",
+                            "name": "候诊区",
+                            "aliases": ["候诊区", "椅子"],
+                            "status": "approved",
+                            "entrance_pose": {
+                                "x": -1.0,
+                                "y": 0.0,
+                                "yaw": -1.57,
+                            },
+                            "metadata": {
+                                "typical_requests": ["我累了，带我去坐下"]
+                            },
+                        }
+                    ],
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
         objects = {
             "activation": "isolated_demo_only",
             "objects": [
@@ -101,6 +143,7 @@ class ObjectDockingDashboardTest(unittest.TestCase):
                 scenes=scene_path,
                 live_fps=10,
                 live_resolution="960x540",
+                intent_resolvers={"test_scene": self.FakeIntentResolver()},
             )
         )
 
@@ -115,6 +158,11 @@ class ObjectDockingDashboardTest(unittest.TestCase):
                 config["scenes"][0]["map"]["layers"][0]["asset"],
                 "/asset/map/test_scene/rgb_pointcloud.png",
             )
+            self.assertEqual(config["scenes"][0]["intent_parser"], "deepseek")
+            self.assertEqual(
+                config["scenes"][0]["places"][0]["examples"],
+                ["我累了，带我去坐下"],
+            )
 
     def test_command_changes_distance_and_rejects_unknown_scene(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -127,6 +175,23 @@ class ObjectDockingDashboardTest(unittest.TestCase):
             self.assertAlmostEqual(plan.docking_pose.y, -0.4)
             with self.assertRaisesRegex(ValueError, "未配置或未启用"):
                 session.plan("请停到红色方块前0.8米", "missing")
+
+    def test_unified_router_sends_fuzzy_region_and_object_commands_to_different_modes(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            session = self._session(Path(directory))
+
+            _, region = session.resolve_mission("我累了，带我去坐下", "test_scene")
+            _, object_dock = session.resolve_mission(
+                "请停到红色方块前0.8米",
+                "test_scene",
+            )
+
+            self.assertEqual(region["mode"], "semantic_region_navigation")
+            self.assertEqual(region["task_id"], "waiting_area")
+            self.assertEqual(region["intent_resolution"]["parser"], "deepseek")
+            self.assertEqual(object_dock["mode"], "object_relative_docking")
+            self.assertEqual(object_dock["task_id"], "red_cube")
+            self.assertIsNone(object_dock["intent_resolution"])
 
 
 if __name__ == "__main__":

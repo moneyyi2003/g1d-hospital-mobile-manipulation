@@ -104,6 +104,8 @@ function drawMap(canvasId, image) {
     ctx.lineWidth = 2;
     ctx.stroke();
     ctx.restore();
+  } else if (app.state.mission?.target_pose) {
+    drawMarker(ctx, app.state.mission.target_pose, "#ffad5c", 5);
   }
 
   const robotPose = app.state.pose;
@@ -134,13 +136,28 @@ function render() {
   badge.className = `badge ${state.state}`;
   $("message").textContent = state.message;
   $("scene").textContent = sceneById(state.scene_id)?.name || state.scene_id || "—";
-  $("target").textContent = state.object_target?.name || state.task || "—";
+  const mission = state.mission;
+  $("missionMode").textContent = mission?.mode === "object_relative_docking"
+    ? "物体精确停靠"
+    : mission?.mode === "semantic_region_navigation"
+      ? "语义区域导航"
+      : "—";
+  $("target").textContent = mission?.target_name || state.object_target?.name || state.task || "—";
+  const intent = state.intent_resolution;
+  $("intent").textContent = intent
+    ? `${intent.parser} · ${intent.place_name} · ${(intent.confidence || 0).toFixed(2)}`
+    : mission?.mode === "object_relative_docking"
+      ? "物体目录 + 距离解析"
+      : "—";
   const plan = state.docking_plan;
   $("distance").textContent = plan
     ? `${plan.constraint.requested_standoff_m.toFixed(2)} m`
-    : "—";
-  $("dockPose").textContent = plan
-    ? `${plan.docking_pose.x.toFixed(2)}, ${plan.docking_pose.y.toFixed(2)}, ${plan.docking_pose.yaw.toFixed(2)}`
+    : mission?.mode === "semantic_region_navigation"
+      ? "正式区域停靠点"
+      : "—";
+  const targetPose = mission?.target_pose;
+  $("dockPose").textContent = targetPose
+    ? `${targetPose.x.toFixed(2)}, ${targetPose.y.toFixed(2)}, ${targetPose.yaw.toFixed(2)}`
     : "—";
   $("robotPose").textContent = state.pose
     ? `${state.pose.x.toFixed(2)}, ${state.pose.y.toFixed(2)}, ${state.pose.yaw.toFixed(2)}`
@@ -169,6 +186,15 @@ function render() {
 
 function renderExamples() {
   $("exampleChips").replaceChildren();
+  for (const place of app.scene.places || []) {
+    for (const example of place.examples) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.textContent = example;
+      button.onclick = () => {$("commandInput").value = example;};
+      $("exampleChips").append(button);
+    }
+  }
   for (const object of app.scene.objects) {
     for (const example of object.examples) {
       const button = document.createElement("button");
