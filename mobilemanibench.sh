@@ -73,6 +73,9 @@ case "${command_name}" in
     hospital-object-docking)
         exec python3 "${WORKSPACE_DIR}/scripts/run_hospital_object_docking_demo.py" "$@"
         ;;
+    hospital-object-web)
+        exec python3 "${WORKSPACE_DIR}/scripts/serve_object_docking_dashboard.py" "$@"
+        ;;
     hospital-map)
         if [[ ! -x "${LINGBOT_ENV_DIR}/bin/python" ]]; then
             echo "LingBot-Map environment is missing: ${LINGBOT_ENV_DIR}" >&2
@@ -96,7 +99,7 @@ case "${command_name}" in
         exec "${ENV_DIR}/bin/python" "$@"
         ;;
     help|-h|--help)
-        echo "Usage: ./mobilemanibench.sh {isaacsim|smoke|g1-d-smoke|vln|simple-room-vln|hospital-survey|hospital-map|hospital-vln|hospital-demo|hospital-web|hospital-docking|hospital-object-docking|doctor|convert-urdf|python} [args...]"
+        echo "Usage: ./mobilemanibench.sh {isaacsim|smoke|g1-d-smoke|vln|simple-room-vln|hospital-survey|hospital-map|hospital-vln|hospital-demo|hospital-web|hospital-docking|hospital-object-docking|hospital-object-web|doctor|convert-urdf|python} [args...]"
         echo "  isaacsim     Launch the pinned MobileManiBench Isaac Sim GUI environment."
         echo "  smoke        Load one headless MobileManiBench G1/YCB environment."
         echo "  g1-d-smoke   Load and step the converted custom G1_D articulation."
@@ -109,6 +112,7 @@ case "${command_name}" in
         echo "  hospital-web     Serve the TCP-only Hospital live dashboard (default port 6006)."
         echo "  hospital-docking Build isolated experimental multi-chair docking candidates."
         echo "  hospital-object-docking Run the isolated object-relative precision docking demo."
+        echo "  hospital-object-web Serve the interactive object-relative docking dashboard (port 6009)."
         echo "  doctor       Check Python, GPU, robot, USD, and official assets."
         echo "  convert-urdf Convert g1_d_description/g1_d.urdf to USD."
         echo "  python       Run a Python command inside the pinned environment."

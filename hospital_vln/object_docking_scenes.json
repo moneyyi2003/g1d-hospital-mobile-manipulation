@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "activation": "explicit_object_docking_dashboard",
+  "default_scene_id": "hospital_demo",
+  "scenes": [
+    {
+      "id": "hospital_demo",
+      "name": "Isaac Sim Hospital · G1-D",
+      "status": "enabled",
+      "runner": "hospital_object_docking",
+      "map": "outputs/hospital_vln/lingbot_map/map.yaml",
+      "places": "outputs/hospital_vln/places_formal.json",
+      "mapping_summary": "outputs/hospital_vln/mapping_summary.json",
+      "objects": "hospital_vln/object_targets_demo.json",
+      "output": "outputs/hospital_object_docking_web"
+    }
+  ]
+}

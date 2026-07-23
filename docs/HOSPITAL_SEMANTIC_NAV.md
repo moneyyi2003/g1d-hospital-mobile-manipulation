@@ -210,3 +210,32 @@ Isaac Streaming，应先正常停止它。
 2026-07-23 实际运行结果：目标停靠点 `(-2.500,-0.600,1.571)`，规划路径 2.657 m，
 619 帧到达；停靠点位置误差 0.030 m、朝向误差 0.050 rad，实际基座到方块中心距离
 0.809 m。该结果仍为 `stable_assisted`，纯轮地接触误差尚未达到同等精度。
+
+### 6.1 物体级精确停靠实时控制台
+
+离线 `hospital-object-docking` 之外，独立的 6009 控制台可以从浏览器反复提交物体和距离
+不同的指令；每次提交都会重新计算并检查停靠点、启动新的 Isaac Sim 进程，并通过
+MJPEG 与 live state 实时显示 chase camera、规划路径、实际轨迹、物体位置和机器人位姿：
+
+```bash
+./mobilemanibench.sh hospital-object-web --host 0.0.0.0 --port 6009
+```
+
+浏览器打开 `http://服务器地址:6009`。例如可以依次提交：
+
+```text
+请停到红色方块前0.6米
+请停到红色方块前0.8米
+请停到红色方块前1.0米
+```
+
+距离不是前端枚举值；后端从指令中解析数值，并继续执行安全下限、2 m 操作 demo 上限、
+footprint、occupancy 和路径可达性检查。任务运行时可在页面停止；已有其他 Isaac Kit
+进程时服务拒绝再启动一个实例。6009 使用
+`outputs/hospital_object_docking_web/`，不会覆盖既有 0.8 m 验收制品或 6006 状态。
+
+场景下拉框由 `hospital_vln/object_docking_scenes.json` 驱动。一个场景只有同时具备
+occupancy map、地图预览、物体目录、地点库和经过实现/验证的 simulator runner 才能标为
+`enabled`。当前唯一启用并真实验证的是 `hospital_demo`；新增 SimpleRoom 或其他场景时，
+还需实现该场景的 object spawn、坐标系/地面高度、机器人起点、实时发布和 runner，不能
+只在 JSON 中写一个名称后宣称已支持。

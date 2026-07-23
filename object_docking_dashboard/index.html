@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>G1-D 物体级精确停靠 Live</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <header>
+      <div>
+        <p class="eyebrow">ISAAC SIM 6 · OBJECT-RELATIVE DOCKING · TCP LIVE</p>
+        <h1>G1-D 物体级精确停靠</h1>
+      </div>
+      <span id="stateBadge" class="badge idle">IDLE</span>
+    </header>
+
+    <section class="command-panel">
+      <form id="commandForm">
+        <div class="control-grid">
+          <div class="scene-control">
+            <label for="sceneSelect">仿真场景</label>
+            <select id="sceneSelect"></select>
+          </div>
+          <div class="command-control">
+            <label for="commandInput">物体级停靠指令（物体和距离均可修改）</label>
+            <input
+              id="commandInput"
+              autocomplete="off"
+              value="请停到红色方块前0.8米"
+              placeholder="例如：请停到红色方块前0.6米"
+            >
+          </div>
+          <button id="submitButton" type="submit">启动实时仿真</button>
+          <button id="cancelButton" class="secondary" type="button">停止任务</button>
+        </div>
+      </form>
+      <div id="exampleChips" class="chips"></div>
+      <p id="message">正在连接物体级停靠控制台…</p>
+      <p class="scope-note">
+        场景列表来自服务器 profile；只有具备地图、物体目录和对应 runner 的场景才会显示。
+      </p>
+    </section>
+
+    <main class="views">
+      <article class="view camera-card">
+        <div class="view-title">
+          <div><span>01</span><h2>Isaac Sim 实时画面</h2></div>
+          <small>CHASE CAMERA · LIVE MJPEG</small>
+        </div>
+        <div class="camera-shell">
+          <img id="cameraView" alt="Isaac Sim 物体精确停靠实时画面">
+          <div id="cameraEmpty">提交指令后启动 Isaac Sim RTX 相机</div>
+        </div>
+      </article>
+
+      <article class="view">
+        <div class="view-title">
+          <div><span>02</span><h2>LingBot RGB 点云</h2></div>
+          <small>OBJECT + DOCK + ROBOT</small>
+        </div>
+        <div class="map-shell"><canvas id="pointcloudCanvas"></canvas></div>
+      </article>
+
+      <article class="view">
+        <div class="view-title">
+          <div><span>03</span><h2>Occupancy Map</h2></div>
+          <small>PLAN + LIVE TRACE</small>
+        </div>
+        <div class="map-shell"><canvas id="occupancyCanvas"></canvas></div>
+      </article>
+    </main>
+
+    <section class="legend">
+      <span><i class="planned"></i>规划路径 / 计算停靠点</span>
+      <span><i class="actual"></i>实际轨迹</span>
+      <span><i class="robot"></i>机器人</span>
+      <span><i class="object"></i>目标物体</span>
+    </section>
+
+    <section class="telemetry">
+      <div><span>场景</span><b id="scene">—</b></div>
+      <div><span>目标物体</span><b id="target">—</b></div>
+      <div><span>请求距离</span><b id="distance">—</b></div>
+      <div><span>计算停靠位姿</span><b id="dockPose">—</b></div>
+      <div><span>机器人位姿</span><b id="robotPose">—</b></div>
+      <div><span>动作</span><b id="action">—</b></div>
+      <div><span>航点</span><b id="waypoint">—</b></div>
+      <div><span>帧 / 时间</span><b id="timing">—</b></div>
+      <div><span>最终误差</span><b id="result">—</b></div>
+    </section>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

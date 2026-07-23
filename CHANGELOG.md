@@ -5,6 +5,26 @@
 
 ## 2026-07-23
 
+### 物体级精确停靠实时控制台
+
+- 新增独立 `hospital-object-web` / 6009 控制台；浏览器可提交包含不同物体和距离的
+  自然语言停靠指令，后端每次重新解析约束、检查 footprint/occupancy/可达性并启动
+  Isaac Sim，不再只是展示既有 GIF。
+- 页面通过 TCP MJPEG 与 live state 实时显示 chase camera、LingBot RGB 点云、
+  occupancy map、规划路径、实际轨迹、物体、停靠点和误差遥测；可停止运行中的任务。
+- 新增显式场景 profile 注册表。当前只启用已实现并验证的 `hospital_demo` runner；
+  其他场景必须补齐仿真加载、坐标系、物体生成、地图和实时发布后才能开放。
+- 6009 输出隔离到 `outputs/hospital_object_docking_web/`，不覆盖既有 0.8 m 制品，
+  也不修改或停止 6006 正式 Hospital dashboard。
+
+验证：
+
+- 物体停靠、实时控制台和既有 Hospital live dashboard 相关轻量测试 9/9 通过；
+  Python/JavaScript/shell 语法检查和 `git diff --check` 通过。
+- 从 6009 API 真实提交“请停到红色方块前0.6米”：重新计算停靠位姿
+  `(-2.500,-0.400,1.571)`，Isaac 622 帧成功；实际基座—物体距离 0.611 m、
+  位置误差 0.030 m、朝向误差 0.049 rad；MJPEG 实时端点返回连续画面。
+
 ### Hospital 物体级参数化精确停靠
 
 - 新增独立 `hospital-object-docking` 入口、demo-only 物体目录和无 Isaac 依赖的停靠

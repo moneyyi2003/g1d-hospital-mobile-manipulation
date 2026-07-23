@@ -48,6 +48,10 @@ LingBot RGB 点云和 occupancy map 上的实时机器人轨迹，并已接入 D
   位姿，并用正式 occupancy map 验证 footprint 与路径；Isaac 实测位置误差 0.030 m、
   朝向误差 0.050 rad，实际基座—方块中心距离 0.809 m；输出仅写入
   `outputs/hospital_object_docking/`，6006 默认 demo 未改变。
+- [x] 新增独立 6009 物体停靠实时控制台：浏览器可修改物体/距离指令，每次重新规划并
+  启动 Isaac，通过 TCP MJPEG 和 live state 显示相机、规划/实际轨迹及停靠误差；
+  `0.6 m` 指令真实运行 622 帧成功，实际距离 0.611 m、位置误差 0.030 m、朝向误差
+  0.049 rad，输出与既有 0.8 m 验收和 6006 隔离。
 
 ## 当前问题
 
@@ -71,6 +75,9 @@ LingBot RGB 点云和 occupancy map 上的实时机器人轨迹，并已接入 D
 - [ ] **P1：物体精确停靠仍依赖已知物体位姿和 assisted 控制。** 下一步接入 RGB 物体
   检测/跟踪与末端视觉伺服，并将 demo 方块替换成有碰撞、质量和抓取判据的动态刚体；
   当前 0.809 m 结果不能表述为纯轮地接触或 OpenVLA 抓取验收。
+- [ ] **P1：物体停靠实时控制台当前只启用 Hospital runner。** 场景 profile 和前端切换
+  接口已经存在，但 SimpleRoom 或其他场景仍需各自的 USD 加载、坐标系/起点、物体生成、
+  地图与 live publisher 验证；不能把仅有 profile 名称视为多场景运行成功。
 - [ ] **P1：MobileManiBench 官方 G1/YCB smoke 的最新资产状态需复核。** 旧
   `task.md` 中“Assets.zip 下载中”的记录可能已过时，应以 `doctor`、ZIP 校验和实际
   reset/step 返回码重新验收。
