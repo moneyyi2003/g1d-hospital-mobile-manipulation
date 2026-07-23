@@ -64,6 +64,9 @@ case "${command_name}" in
             "${WORKSPACE_DIR}/run_g1d_hospital_vln.py" \
             --viewport-mode chase --keep-open --command "请带我到候诊区" "$@"
         ;;
+    hospital-web)
+        exec python3 "${WORKSPACE_DIR}/scripts/serve_hospital_dashboard.py" "$@"
+        ;;
     hospital-map)
         if [[ ! -x "${LINGBOT_ENV_DIR}/bin/python" ]]; then
             echo "LingBot-Map environment is missing: ${LINGBOT_ENV_DIR}" >&2
@@ -87,8 +90,8 @@ case "${command_name}" in
         exec "${ENV_DIR}/bin/python" "$@"
         ;;
     help|-h|--help)
-        echo "Usage: ./mobilemanibench.sh {isaacsim|smoke|g1-d-smoke|vln|simple-room-vln|hospital-survey|hospital-map|hospital-vln|hospital-demo|doctor|convert-urdf|python} [args...]"
-        echo "  isaacsim     Launch the Isaac Sim 4.5 GUI application."
+        echo "Usage: ./mobilemanibench.sh {isaacsim|smoke|g1-d-smoke|vln|simple-room-vln|hospital-survey|hospital-map|hospital-vln|hospital-demo|hospital-web|doctor|convert-urdf|python} [args...]"
+        echo "  isaacsim     Launch the pinned MobileManiBench Isaac Sim GUI environment."
         echo "  smoke        Load one headless MobileManiBench G1/YCB environment."
         echo "  g1-d-smoke   Load and step the converted custom G1_D articulation."
         echo "  vln          Run the deterministic G1_D language-to-point navigation baseline."
@@ -97,6 +100,7 @@ case "${command_name}" in
         echo "  hospital-map     Run LingBot alignment/map building and render previews."
         echo "  hospital-vln     Navigate G1_D in Hospital using bootstrap or formal map artifacts."
         echo "  hospital-demo    Open the Hospital GUI with a chase camera and keep it open."
+        echo "  hospital-web     Serve the TCP-only Hospital live dashboard (default port 6006)."
         echo "  doctor       Check Python, GPU, robot, USD, and official assets."
         echo "  convert-urdf Convert g1_d_description/g1_d.urdf to USD."
         echo "  python       Run a Python command inside the pinned environment."

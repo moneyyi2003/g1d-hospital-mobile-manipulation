@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>G1-D Hospital Live</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <header>
+      <div>
+        <p class="eyebrow">ISAAC SIM 6 · LINGBOT-MAP · TCP-ONLY LIVE VIEW</p>
+        <h1>G1-D Hospital 语义导航</h1>
+      </div>
+      <span id="stateBadge" class="badge idle">IDLE</span>
+    </header>
+
+    <section class="command-panel">
+      <form id="commandForm">
+        <label for="commandInput">导航指令</label>
+        <div class="command-row">
+          <input id="commandInput" value="请带我到候诊区" autocomplete="off" />
+          <button id="submitButton" type="submit">执行</button>
+          <button id="cancelButton" type="button" class="secondary">停止</button>
+        </div>
+      </form>
+      <div id="placeChips" class="chips"></div>
+      <p id="message">正在连接 Hospital 控制台…</p>
+    </section>
+
+    <main class="views">
+      <article class="view camera-card">
+        <div class="view-title">
+          <div><span>01</span><h2>Isaac Sim 运动画面</h2></div>
+          <small>CHASE CAMERA · LIVE JPEG</small>
+        </div>
+        <div class="camera-shell">
+          <img id="cameraView" alt="Isaac Sim Hospital 第三人称画面" />
+          <div id="cameraEmpty">启动任务后加载 RTX 画面</div>
+        </div>
+      </article>
+
+      <article class="view">
+        <div class="view-title">
+          <div><span>02</span><h2>LingBot RGB 点云</h2></div>
+          <small>TOP-DOWN · ROBOT OVERLAY</small>
+        </div>
+        <div class="map-shell"><canvas id="pointcloudCanvas"></canvas></div>
+      </article>
+
+      <article class="view">
+        <div class="view-title">
+          <div><span>03</span><h2>Occupancy Map</h2></div>
+          <small>ROS GRID · PLAN + TRACE</small>
+        </div>
+        <div class="map-shell"><canvas id="occupancyCanvas"></canvas></div>
+      </article>
+    </main>
+
+    <section class="telemetry">
+      <div><span>目标</span><b id="task">—</b></div>
+      <div><span>动作</span><b id="action">—</b></div>
+      <div><span>位置</span><b id="pose">—</b></div>
+      <div><span>速度</span><b id="velocity">—</b></div>
+      <div><span>航点</span><b id="waypoint">—</b></div>
+      <div><span>帧 / 时间</span><b id="timing">—</b></div>
+    </section>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

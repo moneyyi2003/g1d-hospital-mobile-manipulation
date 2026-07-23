@@ -6,9 +6,10 @@
 
 Hospital 语义导航 MVP 已在确定性 `stable_assisted` 模式通过，当前主线应转向
 G1-D 纯轮地接触物理控制的稳定性与回归；完成后再推进移动操作任务。根目录长期维护
-机制已经建立。2026-07-23 新增的 Isaac Sim WebRTC 排查确认：Streaming 软件栈正常，
-但当前 AutoDL 公有云实例没有浏览器可达的 47998/UDP 媒体路径；该外部网络条件解决前，
-WebRTC 页面会停在 `WAITING FOR STREAM`。
+机制已经建立。Hospital TCP dashboard 已能在浏览器同步显示 Isaac chase camera、
+LingBot RGB 点云和 occupancy map 上的实时机器人轨迹，不依赖 WebRTC UDP。2026-07-23
+的 WebRTC 排查仍确认：当前 AutoDL 公有云实例没有浏览器可达的 47998/UDP 媒体路径；
+该外部网络条件解决前，原生 WebRTC 页面仍会停在 `WAITING FOR STREAM`。
 
 ## 已完成并验证
 
@@ -29,12 +30,17 @@ WebRTC 页面会停在 `WAITING FOR STREAM`。
   加载，RTX 与 NVENC 库可用。
 - [x] 确认 49100/TCP 正常，47998/UDP 媒体协商未建立；根因是 AutoDL 无独立公网 IP，
   自定义服务及 SSH 隧道仅提供 TCP/HTTP 路径。
+- [x] 增加 `hospital-web` 三视图控制台：浏览器输入正式地点指令后，同步显示 Isaac
+  chase camera、LingBot RGB 点云和 occupancy map 上的规划路径与实际轨迹。
+- [x] 实机通过 dashboard 执行“请带我到候诊区”：约 57 秒结束，1092 帧，位置误差
+  0.119 m，航向误差 0.117 rad；HTTP 地图资源和 MJPEG 流均读取成功。
 
 ## 当前问题
 
 - [ ] **P0：Isaac Sim WebRTC 缺少 UDP 可达路径。** 需要由运行平台提供
   47998/UDP 映射、UDP 覆盖网络或外部 TURN relay；仅重启 Kit、设置 HTTP 代理域名或
-  转发 49100/TCP 无法显示视频。详见 `docs/ISAAC_SIM_STREAMING.md`。
+  转发 49100/TCP 无法显示原生 Streaming 视频。三视图演示可先使用 TCP-only
+  `hospital-web`；原生 WebRTC 限制详见 `docs/ISAAC_SIM_STREAMING.md`。
 - [ ] **P0：纯轮地接触导航尚未通过。** 当前 300 帧 physics probe 失败，
   位置误差 4.941 m；需要检查轮轴方向、驱动符号、摩擦、质量/惯量、力矩上限和底盘稳定性。
 - [ ] **P0：两套 Isaac 依赖链并存。** 主 standalone 是 6.0.1/Python 3.12，
@@ -51,6 +57,15 @@ WebRTC 页面会停在 `WAITING FOR STREAM`。
   存储，而不是提交 GIF、点云、地图和模型。
 
 ## 下一步执行计划
+
+### 0. Hospital 三视图演示使用方式
+
+- 运行 `./mobilemanibench.sh hospital-web --host 0.0.0.0 --port 6006`，通过 AutoDL
+  HTTP 自定义服务或 SSH TCP 隧道访问。
+- 输入“请带我到候诊区”或“请带我到医院前台”；地图底图是离线 LingBot 结果，机器人
+  位姿、规划路径和实际轨迹为实时叠加。
+- 启动任务前必须停止其他 Isaac Kit；dashboard 会主动拒绝并发 Kit。
+- 详细接口、输出和限制见 `docs/HOSPITAL_SEMANTIC_NAV.md` 第 5 节。
 
 ### 1. 恢复 Streaming 网络可达性（外部前置条件）
 

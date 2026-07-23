@@ -57,6 +57,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--record-gif", type=Path)
     parser.add_argument("--record-fps", type=int, default=5)
     parser.add_argument(
+        "--live-dir",
+        type=Path,
+        help="Publish live state JSON and chase-camera JPEGs for the Hospital web dashboard",
+    )
+    parser.add_argument("--live-fps", type=int, default=10)
+    parser.add_argument("--live-resolution", default="960x540")
+    parser.add_argument(
         "--viewport-mode",
         choices=("chase", "overview"),
         default="chase",
@@ -100,6 +107,8 @@ def parse_args() -> argparse.Namespace:
 args = parse_args()
 if args.record_gif is not None and not args.record_gif.is_absolute():
     args.record_gif = ROOT / args.record_gif
+if args.live_dir is not None and not args.live_dir.is_absolute():
+    args.live_dir = ROOT / args.live_dir
 if args.test:
     args.headless = True
     if args.steps <= 0:
@@ -120,6 +129,16 @@ try:
     )
 except (TypeError, ValueError) as exc:
     raise SystemExit("--resolution must be WIDTHxHEIGHT") from exc
+try:
+    live_width, live_height = (
+        int(value) for value in args.live_resolution.lower().split("x", 1)
+    )
+except (TypeError, ValueError) as exc:
+    raise SystemExit("--live-resolution must be WIDTHxHEIGHT") from exc
+if not 1 <= args.live_fps <= 30:
+    raise SystemExit("--live-fps must be between 1 and 30")
+if live_width <= 0 or live_height <= 0:
+    raise SystemExit("--live-resolution dimensions must be positive")
 
 for required in (ROOM_USD, ROBOT_USD):
     if not required.is_file():
@@ -156,6 +175,7 @@ from hospital_vln.artifacts import (
     build_bootstrap_artifacts,
     build_survey_path,
 )
+from hospital_vln.live import LivePublisher, publish_failure
 from simple_room_vln.artifacts import load_lingbot_artifacts
 from simple_room_vln.core import PathFollower, Pose2D, path_length, resolve_place
 
@@ -473,6 +493,27 @@ def main() -> int:
         print(f"Resolved {args.command!r} -> {target.place_id}")
     print(f"Planned {len(path)} waypoints, length={path_length(path):.3f} m")
 
+    live = None
+    if args.live_dir is not None:
+        live = LivePublisher(
+            args.live_dir,
+            command="" if args.survey else args.command,
+            task=task,
+            map_source=map_source,
+            path=path,
+        )
+        live.publish_state(
+            state="loading",
+            message="正在加载 Hospital 场景、G1-D 和 RTX 相机…",
+            frame=0,
+            action="loading",
+            pose=HOSPITAL_START,
+            linear=0.0,
+            angular=0.0,
+            waypoint=0,
+            waypoint_count=max(0, len(path) - 1),
+        )
+
     add_scene(path, None if target is None else target.pose)
     robot = WheeledRobot(
         paths=ROBOT_PRIM_PATH,
@@ -495,17 +536,21 @@ def main() -> int:
 
     overview_camera = None
     gif_frames = []
-    if args.record_gif is not None:
+    if args.record_gif is not None or live is not None:
         if not 1 <= args.record_fps <= PHYSICS_HZ:
             raise ValueError("--record-fps must be between 1 and 60")
         from isaacsim.sensors.camera import Camera
 
+        overview_fps = max(args.record_fps if args.record_gif is not None else 1, args.live_fps)
+        overview_resolution = (
+            (live_width, live_height) if live is not None else (480, 270)
+        )
         overview_camera = Camera(
             prim_path="/World/VLNChaseCamera",
             position=chase_camera_pose(HOSPITAL_START)[0],
             orientation=chase_camera_pose(HOSPITAL_START)[1],
-            frequency=args.record_fps,
-            resolution=(480, 270),
+            frequency=overview_fps,
+            resolution=overview_resolution,
         )
 
     if not args.headless:
@@ -561,6 +606,18 @@ def main() -> int:
     )
     frame = 0
     last_label = "start"
+    if live is not None:
+        live.publish_state(
+            state="running",
+            message="场景就绪，机器人开始执行导航指令。",
+            frame=0,
+            action="start",
+            pose=pose,
+            linear=0.0,
+            angular=0.0,
+            waypoint=follower.index,
+            waypoint_count=max(0, len(path) - 1),
+        )
     while simulation_app.is_running():
         observed = robot_pose(robot) if args.wheel_physics_only else pose
         linear, angular, label = follower.command(observed)
@@ -581,12 +638,32 @@ def main() -> int:
         simulation_app.update()
         if recorder is not None:
             recorder.capture(current)
-        if overview_camera is not None and frame % max(1, PHYSICS_HZ // args.record_fps) == 0:
+        live_due = live is not None and frame % max(1, PHYSICS_HZ // args.live_fps) == 0
+        gif_due = (
+            args.record_gif is not None
+            and frame % max(1, PHYSICS_HZ // args.record_fps) == 0
+        )
+        if overview_camera is not None and (live_due or gif_due):
             image = camera_rgb(overview_camera)
             if image is not None:
-                from PIL import Image
+                if live_due:
+                    live.publish_image(image)
+                if gif_due:
+                    from PIL import Image
 
-                gif_frames.append(Image.fromarray(image).copy())
+                    gif_frames.append(Image.fromarray(image).copy())
+        if live_due:
+            live.publish_state(
+                state="running",
+                message=f"正在导航：{label}，航点 {follower.index}/{len(path) - 1}",
+                frame=frame,
+                action=label,
+                pose=current,
+                linear=linear,
+                angular=angular,
+                waypoint=follower.index,
+                waypoint_count=max(0, len(path) - 1),
+            )
         if label != last_label or frame % 240 == 0:
             print(
                 f"frame={frame:4d} state={label:7s} waypoint={follower.index}/{len(path)-1} "
@@ -649,6 +726,23 @@ def main() -> int:
     summary_name = "survey_summary.json" if args.survey else "run_summary.json"
     summary_path = args.output_dir / summary_name
     summary_path.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+    if live is not None:
+        live.publish_state(
+            state="succeeded" if follower.done else "failed",
+            message=(
+                f"已到达 {task}，位置误差 {position_error:.3f} m。"
+                if follower.done
+                else f"任务结束但未到达目标，位置误差 {position_error:.3f} m。"
+            ),
+            frame=frame,
+            action="arrived" if follower.done else "failed",
+            pose=final_pose,
+            linear=0.0,
+            angular=0.0,
+            waypoint=follower.index,
+            waypoint_count=max(0, len(path) - 1),
+            result=result,
+        )
     print(
         f"Result: success={follower.done} position_error={position_error:.3f} m "
         f"yaw_error={yaw_error:.3f} rad"
@@ -679,6 +773,15 @@ def main() -> int:
 
 try:
     exit_code = main()
+except Exception as exc:
+    if args.live_dir is not None:
+        publish_failure(
+            args.live_dir,
+            command=args.command,
+            message=f"{type(exc).__name__}: {exc}",
+            pose=HOSPITAL_START,
+        )
+    raise
 finally:
     simulation_app.close()
 

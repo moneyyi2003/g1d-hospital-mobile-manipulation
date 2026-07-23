@@ -99,3 +99,53 @@ bootstrap 地图。`--test` 会在 1200 帧内断言机器人到达且位置误�
 ./mobilemanibench.sh hospital-vln --headless --command '请带我到候诊区' \
   --record-gif outputs/hospital_vln/navigation_waiting_area.gif
 ```
+
+## 5. 浏览器三视图实时演示（推荐）
+
+Hospital dashboard 把以下内容放在同一个浏览器页面中：
+
+1. Isaac Sim RTX chase camera：实时显示 G1-D 在 Hospital 中运动；
+2. LingBot-Map RGB-only 彩色点云俯视图：实时叠加机器人朝向、规划路径和实际轨迹；
+3. ROS occupancy map：实时叠加同一组机器人位姿、路径和轨迹。
+
+点云和 occupancy 是 `hospital-map` 已生成并审核的静态地图底图；运行导航时实时更新的是
+机器人位姿与轨迹。该演示不会在每个导航帧重新执行 LingBot 推理，也不会把 Isaac 位姿
+冒充为新的纯视觉建图结果。
+
+启动前先确认没有其他 Isaac Kit 实例：
+
+```bash
+ps -eo pid,etime,cmd | grep '/isaacsim/kit/kit '
+```
+
+然后启动 dashboard：
+
+```bash
+./mobilemanibench.sh hospital-web --host 0.0.0.0 --port 6006
+```
+
+浏览器打开 `http://服务器地址:6006`，输入“请带我到候诊区”或
+“请带我到医院前台”，点击“执行”。服务端只接受正式地点库中已审核的目标；页面会先显示
+规划路径，再启动主 Isaac Sim 6.0.1 headless 进程，并以约 10 Hz 更新状态和 chase
+camera。点击“停止”会向当前 Isaac 子进程发送终止请求。
+
+AutoDL 需要把 6006 配置成 TCP/HTTP 自定义服务；也可以从本地做 TCP 隧道：
+
+```bash
+ssh -L 6006:127.0.0.1:6006 USER@SERVER
+```
+
+这条链路全部基于 HTTP/TCP，不需要 WebRTC 的 47998/UDP，因此适用于当前实例。dashboard
+会拒绝在另一个 Isaac Kit 正在运行时启动任务，避免两个 Kit 实例争用 GPU；若正在运行
+Isaac Streaming，应先正常停止它。
+
+运行时文件写入 `outputs/hospital_web/`：
+
+- `live/state.json`：指令、目标、当前状态、位姿、规划路径、实际轨迹和最终结果；
+- `live/camera.jpg`：最新 Isaac chase camera 帧；
+- `isaac.log`：本轮 Isaac 启动与导航日志。
+
+这些都是可覆盖的运行输出，不进入 Git。2026-07-23 实机验收“请带我到候诊区”成功：
+dashboard 从指令提交到进程结束约 57 秒，导航 1092 帧，位置误差 0.119 m，航向误差
+0.117 rad；HTTP 页面、两张地图资源和 MJPEG 流均实际读取成功。该结果仍属于
+`stable_assisted` 高层演示，不代表 `--wheel-physics-only` 验收通过。

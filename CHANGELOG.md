@@ -5,6 +5,38 @@
 
 ## 2026-07-23
 
+### Hospital 指令驱动三视图实时 dashboard
+
+- 新增 `hospital-web` 命令和 `scripts/serve_hospital_dashboard.py`，提供纯 HTTP/TCP
+  指令接口、任务状态接口、地图资源和 Isaac chase-camera MJPEG 流。
+- 新增 `hospital_dashboard/` 响应式页面；输入已审核地点指令后，可同时观察 Isaac Sim
+  运动画面、LingBot RGB 点云俯视图和 occupancy map。两张地图实时叠加规划路径、实际
+  轨迹、机器人位置与朝向。
+- `run_g1d_hospital_vln.py` 新增原子化 live state/JPEG 发布；无 Isaac 依赖的发布逻辑
+  拆到 `hospital_vln/live.py`，便于轻量回归。
+- dashboard 在启动前验证正式地图、地点库和预览资产，拒绝与其他 Isaac Kit 并发；
+  支持停止当前任务、子进程异常状态和可迁移的地图资产路径。
+- 更新 `docs/HOSPITAL_SEMANTIC_NAV.md`，记录启动、TCP 暴露、画面语义、运行输出和
+  `stable_assisted` 限制。
+
+验证：
+
+- Hospital 轻量测试 5/5 通过，其中新增 live state 原子写入/轨迹采样、失败状态和
+  dashboard 正式地图规划/可迁移资产测试。
+- `python3 -m py_compile`、`node --check hospital_dashboard/app.js` 和
+  `bash -n mobilemanibench.sh` 通过。
+- 实际从 dashboard 提交“请带我到候诊区”，主 Isaac Sim 6.0.1 成功运行 1092 帧；
+  总路径 7.376 m，位置误差 0.119 m，航向误差 0.117 rad，进程返回成功。
+- 目视确认最终 chase camera 中 G1-D 停靠在候诊椅前；HTTP 页面、RGB 点云、
+  occupancy 资源和 MJPEG 流均实际读取成功。
+
+已知限制：
+
+- dashboard 的点云和 occupancy 是离线建图底图，实时部分是机器人位姿和轨迹；导航时
+  不会持续重建点云。
+- 当前导航仍为 `stable_assisted`；纯轮地接触失败证据和 P0 调优任务不变。
+- TCP dashboard 绕过了当前 WebRTC UDP 不可达问题，但不修复原生 WebRTC 网络条件。
+
 ### Isaac Sim 6.0.1 Streaming 网络诊断
 
 - 新增 `docs/ISAAC_SIM_STREAMING.md`，记录日志位置、extension 版本、端口职责、检查命令
