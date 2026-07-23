@@ -6,7 +6,9 @@
 
 Hospital 语义导航 MVP 已在确定性 `stable_assisted` 模式通过，当前主线应转向
 G1-D 纯轮地接触物理控制的稳定性与回归；完成后再推进移动操作任务。根目录长期维护
-机制正在本次变更中建立。
+机制已经建立。2026-07-23 新增的 Isaac Sim WebRTC 排查确认：Streaming 软件栈正常，
+但当前 AutoDL 公有云实例没有浏览器可达的 47998/UDP 媒体路径；该外部网络条件解决前，
+WebRTC 页面会停在 `WAITING FOR STREAM`。
 
 ## 已完成并验证
 
@@ -23,9 +25,16 @@ G1-D 纯轮地接触物理控制的稳定性与回归；完成后再推进移动
 - [x] 增加 Hospital 无界面验收命令和 GUI/WebRTC 演示入口。
 - [x] 盘点当前硬件、系统、Python 和 Isaac Sim 版本，识别旧任务文档中的环境漂移。
 - [x] 建立根仓库忽略策略，排除约数十 GB 的运行时、环境、权重、资产和生成物。
+- [x] 定位 Isaac Sim Streaming 日志，确认 livestream app/webrtc/core extensions 正常
+  加载，RTX 与 NVENC 库可用。
+- [x] 确认 49100/TCP 正常，47998/UDP 媒体协商未建立；根因是 AutoDL 无独立公网 IP，
+  自定义服务及 SSH 隧道仅提供 TCP/HTTP 路径。
 
 ## 当前问题
 
+- [ ] **P0：Isaac Sim WebRTC 缺少 UDP 可达路径。** 需要由运行平台提供
+  47998/UDP 映射、UDP 覆盖网络或外部 TURN relay；仅重启 Kit、设置 HTTP 代理域名或
+  转发 49100/TCP 无法显示视频。详见 `docs/ISAAC_SIM_STREAMING.md`。
 - [ ] **P0：纯轮地接触导航尚未通过。** 当前 300 帧 physics probe 失败，
   位置误差 4.941 m；需要检查轮轴方向、驱动符号、摩擦、质量/惯量、力矩上限和底盘稳定性。
 - [ ] **P0：两套 Isaac 依赖链并存。** 主 standalone 是 6.0.1/Python 3.12，
@@ -43,7 +52,14 @@ G1-D 纯轮地接触物理控制的稳定性与回归；完成后再推进移动
 
 ## 下一步执行计划
 
-### 1. 纯轮地接触最小诊断（下一步）
+### 1. 恢复 Streaming 网络可达性（外部前置条件）
+
+- 获取一个浏览器可通过 49100/TCP 和 47998/UDP 直达的服务器/覆盖网络 IP，或准备
+  可用 TURN relay。
+- 用 `docs/ISAAC_SIM_STREAMING.md` 中的显式 `publicIp` 命令重启。
+- 验收浏览器 `Stream Ready`、ETLI candidate pair 和实际 UDP 流量。
+
+### 2. 纯轮地接触最小诊断
 
 - 固定空旷平面和短时限，分别施加左轮、右轮、同向和反向速度命令。
 - 每种命令记录 wheel joint 实际速度、base 位姿、接触力和是否出现滑移/倾倒。
@@ -51,14 +67,14 @@ G1-D 纯轮地接触物理控制的稳定性与回归；完成后再推进移动
 - 验收：机器人能直行和原地转向，状态有限且无 NaN；测试脚本与小型 JSON 摘要可提交，
   大型日志和视频不提交。
 
-### 2. 物理参数调优与回归
+### 3. 物理参数调优与回归
 
 - 调整轮地材质摩擦、wheel damping/effort、底盘质心和非底盘关节保持增益。
 - 把成功参数固化为明确配置，不隐藏在运行时魔数中。
 - 用 `--wheel-physics-only` 重跑前台短路径，再跑候诊区完整路径。
 - 验收：至少连续 3 次固定种子成功，位置误差不超过 0.20 m，并保留失败时诊断信息。
 
-### 3. 扩展 Hospital 与移动操作
+### 4. 扩展 Hospital 与移动操作
 
 - 审核主走廊 occupancy、连通性和 docking pose 后再增加地点。
 - 先完成静态立方体右手靠近、闭合、抬升至少 5 cm，再替换为 YCB 物体。

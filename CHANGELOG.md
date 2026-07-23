@@ -5,6 +5,18 @@
 
 ## 2026-07-23
 
+### Isaac Sim 6.0.1 Streaming 网络诊断
+
+- 新增 `docs/ISAAC_SIM_STREAMING.md`，记录日志位置、extension 版本、端口职责、检查命令
+  和获得 UDP endpoint 后的正确启动方式。
+- 确认 `omni.kit.livestream.app 10.1.1`、`webrtc 10.3.2`、`core 10.2.1`
+  均已启动，Kit 日志明确报告 49100/TCP 和 47998/UDP 配置生效。
+- 确认 RTX viewport 持续渲染，系统提供 NVENC/解码库，故问题不在 GPU 驱动或编码器。
+- 确认当前 AutoDL 容器只有私网地址，平台自定义服务/SSH 隧道没有浏览器可达的
+  47998/UDP；这解释了页面正常、TCP 信令存在但媒体始终等待的现象。
+- 暂不重启或修改驱动：在没有 UDP 映射、覆盖网络或 TURN relay 时，重复启动不会改变
+  结果。
+
 ### 长期维护与 Git 基线
 
 - 根据工作区代码、任务清单、运行摘要和本机命令建立 `AGENTS.md`、`TODO.md` 与本文件。
