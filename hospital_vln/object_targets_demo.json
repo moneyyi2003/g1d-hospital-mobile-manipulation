@@ -14,6 +14,17 @@
       },
       "interaction_face_yaw": -1.5707963267948966,
       "size_m": 0.2,
+      "physics": {
+        "rigid_body": "dynamic",
+        "collision": true,
+        "mass_kg": 0.25
+      },
+      "support_surface": {
+        "type": "four_leg_table",
+        "collision": true,
+        "tabletop_size_m": [1.0, 0.7, 0.08],
+        "tabletop_surface_z": 0.95
+      },
       "source": "isolated_demo_spawn",
       "status": "demo_only"
     }

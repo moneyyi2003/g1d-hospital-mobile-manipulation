@@ -203,9 +203,12 @@ Isaac Streaming，应先正常停止它。
 
 配置只存在于 `hospital_vln/object_targets_demo.json`；运行输出只写入
 `outputs/hospital_object_docking/`，不会修改 `places_formal.json`、地图、6006 dashboard
-或原 Hospital 输出。当前 demo 的台座和方块是视觉/导航目标，不带刚体抓取物理；它验证
-的是 `REGION -> OBJECT -> PREGRASP_DOCK`，不是 OpenVLA 抓取成功。接真实感知时应以检测
-或跟踪得到的物体位姿替换 demo catalog 坐标，并在导航末端增加视觉伺服微调。
+或原 Hospital 输出。当前 demo 会生成 `1.0 x 0.7 m` 的四腿碰撞桌，红色方块是带
+碰撞、`0.25 kg` 质量的动态刚体；其底面位于 `z=0.95 m` 桌面。场景布局由
+`hospital_vln/manipulation_scene.py` 确定，并写入运行摘要。它仍只验证
+`REGION -> OBJECT -> PREGRASP_DOCK`，尚无右臂 IK、手指闭合、抓取和抬升判据，不是
+OpenVLA 抓取成功。接真实感知时应以检测或跟踪得到的物体位姿替换 demo catalog 坐标，
+并在导航末端增加视觉伺服微调。
 
 2026-07-23 实际运行结果：目标停靠点 `(-2.500,-0.600,1.571)`，规划路径 2.657 m，
 619 帧到达；停靠点位置误差 0.030 m、朝向误差 0.050 rad，实际基座到方块中心距离

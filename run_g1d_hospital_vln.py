@@ -58,13 +58,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--demo-object-pose",
         default="",
-        help="Isolated demo-only object marker X,Y,Z; omitted by the stable Hospital demo",
+        help="Isolated manipulation cube X,Y,Z; omitted by the stable Hospital demo",
     )
     parser.add_argument(
         "--demo-object-size",
         type=float,
         default=0.10,
-        help="Visual cube edge length for --demo-object-pose",
+        help="Physical cube edge length for --demo-object-pose",
     )
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument("--map", type=Path, default=DEFAULT_MAP)
@@ -223,7 +223,7 @@ import numpy as np
 from isaacsim.core.rendering_manager import ViewportManager
 from isaacsim.core.simulation_manager import SimulationManager
 from isaacsim.robot.experimental.wheeled_robots.robots import WheeledRobot
-from pxr import Gf, Sdf, Usd, UsdGeom, UsdLux, UsdShade
+from pxr import Gf, Sdf, Usd, UsdGeom, UsdLux, UsdPhysics, UsdShade
 
 from hospital_vln.artifacts import (
     HOSPITAL_START,
@@ -231,8 +231,15 @@ from hospital_vln.artifacts import (
     build_survey_path,
 )
 from hospital_vln.live import LivePublisher, publish_failure
+from hospital_vln.manipulation_scene import build_manipulation_scene
 from simple_room_vln.artifacts import load_lingbot_artifacts
 from simple_room_vln.core import PathFollower, Place, Pose2D, path_length, resolve_place
+
+demo_manipulation_scene = (
+    build_manipulation_scene(demo_object_values, args.demo_object_size)
+    if demo_object_values is not None
+    else None
+)
 
 
 def command_to_wheels(linear: float, angular: float) -> np.ndarray:
@@ -428,8 +435,7 @@ def add_scene(path: Sequence[tuple[float, float]], target: Pose2D | None) -> Non
             Gf.Vec3d(target.x, target.y, FLOOR_Z_M + 0.025)
         )
     if demo_object_values is not None:
-        object_x, object_y, object_z = demo_object_values
-        pedestal_height = max(0.10, object_z - args.demo_object_size / 2.0)
+        assert demo_manipulation_scene is not None
 
         def bind_material(prim, name: str, color: Gf.Vec3f, *, emissive=False) -> None:
             material = UsdShade.Material.Define(
@@ -449,27 +455,39 @@ def add_scene(path: Sequence[tuple[float, float]], target: Pose2D | None) -> Non
             )
             UsdShade.MaterialBindingAPI.Apply(prim).Bind(material)
 
-        pedestal = UsdGeom.Cube.Define(stage, "/World/ObjectDockingDemo/Pedestal")
-        pedestal.CreateDisplayColorAttr([Gf.Vec3f(0.22, 0.26, 0.30)])
-        bind_material(pedestal.GetPrim(), "Pedestal", Gf.Vec3f(0.22, 0.26, 0.30))
-        pedestal_xform = UsdGeom.Xformable(pedestal)
-        pedestal_xform.AddTranslateOp().Set(
-            Gf.Vec3d(object_x, object_y + 0.22, FLOOR_Z_M + pedestal_height / 2.0)
-        )
-        pedestal_xform.AddScaleOp().Set(
-            Gf.Vec3f(0.25, 0.25, pedestal_height / 2.0)
-        )
+        for part in demo_manipulation_scene.table_parts:
+            table_part = UsdGeom.Cube.Define(
+                stage, f"/World/ObjectDockingDemo/Table/{part.name}"
+            )
+            table_part.CreateSizeAttr(1.0)
+            table_part.CreateDisplayColorAttr([Gf.Vec3f(0.30, 0.18, 0.09)])
+            bind_material(
+                table_part.GetPrim(), part.name, Gf.Vec3f(0.30, 0.18, 0.09)
+            )
+            table_xform = UsdGeom.Xformable(table_part)
+            table_xform.AddTranslateOp().Set(Gf.Vec3d(*part.center))
+            table_xform.AddScaleOp().Set(Gf.Vec3f(*part.size))
+            UsdPhysics.CollisionAPI.Apply(table_part.GetPrim())
+
+        cube_spec = demo_manipulation_scene.cube
         cube = UsdGeom.Cube.Define(stage, "/World/ObjectDockingDemo/RedCube")
         cube.CreateSizeAttr(args.demo_object_size)
         cube.CreateDisplayColorAttr([Gf.Vec3f(0.95, 0.03, 0.03)])
         bind_material(cube.GetPrim(), "RedCube", Gf.Vec3f(0.95, 0.03, 0.03), emissive=True)
         cube_xform = UsdGeom.Xformable(cube)
-        cube_xform.AddTranslateOp().Set(Gf.Vec3d(object_x, object_y, object_z))
+        cube_xform.AddTranslateOp().Set(Gf.Vec3d(*cube_spec.center))
+        UsdPhysics.CollisionAPI.Apply(cube.GetPrim())
+        rigid_body = UsdPhysics.RigidBodyAPI.Apply(cube.GetPrim())
+        rigid_body.CreateRigidBodyEnabledAttr(True)
+        mass = UsdPhysics.MassAPI.Apply(cube.GetPrim())
+        mass.CreateMassAttr(demo_manipulation_scene.cube_mass_kg)
         object_bounds = UsdGeom.BBoxCache(
             Usd.TimeCode.Default(), [UsdGeom.Tokens.default_]
         ).ComputeWorldBound(cube.GetPrim()).ComputeAlignedRange()
         print(
-            "Object docking demo RedCube bounds: "
+            "Manipulation scene: collision table + dynamic RedCube "
+            f"(mass={demo_manipulation_scene.cube_mass_kg:.3f} kg, "
+            f"surface_z={demo_manipulation_scene.tabletop_surface_z:.3f} m); bounds: "
             f"min={tuple(object_bounds.GetMin())}, max={tuple(object_bounds.GetMax())}"
         )
         approach = UsdGeom.BasisCurves.Define(
@@ -480,7 +498,7 @@ def add_scene(path: Sequence[tuple[float, float]], target: Pose2D | None) -> Non
         approach.CreatePointsAttr(
             [
                 Gf.Vec3f(target.x, target.y, FLOOR_Z_M + 0.08),
-                Gf.Vec3f(object_x, object_y, FLOOR_Z_M + 0.08),
+                Gf.Vec3f(cube_spec.center[0], cube_spec.center[1], FLOOR_Z_M + 0.08),
             ]
         )
         approach.CreateWidthsAttr([0.035])
@@ -833,6 +851,34 @@ def main() -> int:
         )
         print(f"Isaac movement GIF: {args.record_gif} ({len(gif_frames)} frames)")
 
+    manipulation_runtime = None
+    if demo_object_values is not None:
+        stage = stage_utils.get_current_stage()
+        cube_prim = stage.GetPrimAtPath("/World/ObjectDockingDemo/RedCube")
+        cube_world = (
+            UsdGeom.XformCache(Usd.TimeCode.Default())
+            .GetLocalToWorldTransform(cube_prim)
+            .ExtractTranslation()
+        )
+        table_prim = stage.GetPrimAtPath("/World/ObjectDockingDemo/Table")
+        table_colliders = [
+            prim
+            for prim in Usd.PrimRange(table_prim)
+            if prim.HasAPI(UsdPhysics.CollisionAPI)
+        ]
+        manipulation_runtime = {
+            "cube_world_position": {
+                "x": float(cube_world[0]),
+                "y": float(cube_world[1]),
+                "z": float(cube_world[2]),
+            },
+            "cube_has_collision": cube_prim.HasAPI(UsdPhysics.CollisionAPI),
+            "cube_is_dynamic_rigid_body": cube_prim.HasAPI(UsdPhysics.RigidBodyAPI),
+            "cube_has_mass": cube_prim.HasAPI(UsdPhysics.MassAPI),
+            "table_collider_count": len(table_colliders),
+        }
+        print(f"Manipulation runtime: {json.dumps(manipulation_runtime)}")
+
     result = {
         "task": task,
         "command": None if args.survey else args.command,
@@ -860,6 +906,13 @@ def main() -> int:
                     (final_pose.x, final_pose.y),
                     (demo_object_values[0], demo_object_values[1]),
                 ),
+                "physics": {
+                    "dynamic_rigid_body": True,
+                    "collision_enabled": True,
+                    "mass_kg": demo_manipulation_scene.cube_mass_kg,
+                },
+                "support_surface": demo_manipulation_scene.to_dict(),
+                "runtime": manipulation_runtime,
             }
             if demo_object_values is not None
             else None
