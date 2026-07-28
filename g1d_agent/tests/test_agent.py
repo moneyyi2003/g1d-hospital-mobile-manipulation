@@ -3,7 +3,11 @@ from __future__ import annotations
 import unittest
 from pathlib import Path
 
-from g1d_agent.adapters import HospitalVlnAdapter, PluginVlaAdapter
+from g1d_agent.adapters import (
+    HospitalVlnAdapter,
+    PluginVlaAdapter,
+    WarehouseVlnAdapter,
+)
 from g1d_agent.agent import G1DTaskAgent
 from g1d_agent.interaction import InteractionProfileDatabase
 from g1d_agent.models import (
@@ -147,6 +151,26 @@ class HospitalVlnAdapterTest(unittest.TestCase):
                 adapter,
                 Path("object_observation.json"),
             )
+
+    def test_warehouse_adapter_only_accepts_semantic_navigation(self) -> None:
+        adapter = WarehouseVlnAdapter(workspace=Path("/workspace"))
+        navigation = RuleTaskPlanner().plan(
+            "请带我到东侧货架通道"
+        ).steps[0]
+        docking = RuleTaskPlanner().plan(
+            "去桌边拿起红色方块"
+        ).steps[0]
+
+        self.assertEqual(
+            adapter.command_for(navigation)[:2],
+            ["/workspace/mobilemanibench.sh", "warehouse-vln"],
+        )
+        result = adapter.execute(docking)
+        self.assertEqual(result.status, StepStatus.BLOCKED)
+        self.assertEqual(
+            result.details["agent_phase"],
+            "warehouse_capability_check",
+        )
 
 
 class G1DTaskAgentTest(unittest.TestCase):

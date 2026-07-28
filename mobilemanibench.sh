@@ -45,6 +45,20 @@ case "${command_name}" in
             "${WORKSPACE_DIR}/run_g1d_simple_room_vln.py" \
             --allow-bootstrap "$@"
         ;;
+    warehouse-survey)
+        exec "${WORKSPACE_DIR}/isaacsim/python.sh" \
+            "${WORKSPACE_DIR}/run_g1d_warehouse_vln.py" \
+            --survey --allow-bootstrap "$@"
+        ;;
+    warehouse-vln)
+        exec "${WORKSPACE_DIR}/isaacsim/python.sh" \
+            "${WORKSPACE_DIR}/run_g1d_warehouse_vln.py" \
+            --allow-bootstrap "$@"
+        ;;
+    warehouse-scene-audit)
+        exec "${WORKSPACE_DIR}/isaacsim/python.sh" \
+            "${WORKSPACE_DIR}/scripts/audit_mobile_scene.py" "$@"
+        ;;
     hospital-survey)
         exec "${WORKSPACE_DIR}/isaacsim/python.sh" \
             "${WORKSPACE_DIR}/run_g1d_hospital_vln.py" \
@@ -102,12 +116,15 @@ case "${command_name}" in
         exec "${ENV_DIR}/bin/python" "$@"
         ;;
     help|-h|--help)
-        echo "Usage: ./mobilemanibench.sh {isaacsim|smoke|g1-d-smoke|vln|simple-room-vln|hospital-survey|hospital-map|hospital-vln|hospital-demo|hospital-web|hospital-docking|hospital-object-docking|hospital-object-web|agent|doctor|convert-urdf|python} [args...]"
+        echo "Usage: ./mobilemanibench.sh {isaacsim|smoke|g1-d-smoke|vln|simple-room-vln|warehouse-survey|warehouse-vln|warehouse-scene-audit|hospital-survey|hospital-map|hospital-vln|hospital-demo|hospital-web|hospital-docking|hospital-object-docking|hospital-object-web|agent|doctor|convert-urdf|python} [args...]"
         echo "  isaacsim     Launch the pinned MobileManiBench Isaac Sim GUI environment."
         echo "  smoke        Load one headless MobileManiBench G1/YCB environment."
         echo "  g1-d-smoke   Load and step the converted custom G1_D articulation."
         echo "  vln          Run the deterministic G1_D language-to-point navigation baseline."
         echo "  simple-room-vln  Navigate G1_D to a language goal in SimpleRoom (GUI by default)."
+        echo "  warehouse-survey Record G1-D RGB in MobileManiBench's multi-shelf Warehouse."
+        echo "  warehouse-vln Navigate G1-D in the multi-shelf Warehouse (bootstrap by default)."
+        echo "  warehouse-scene-audit Audit a USD scene's bounds, meshes, and colliders."
         echo "  hospital-survey  Drive G1_D through the Hospital lobby and record RGB/GIF."
         echo "  hospital-map     Run LingBot alignment/map building and render previews."
         echo "  hospital-vln     Navigate G1_D in Hospital using bootstrap or formal map artifacts."

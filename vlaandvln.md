@@ -10,9 +10,10 @@
 - VLA：在物体进入机器人可操作范围后执行观察—动作闭环；
 - VLN → VLA：先导航、精确停靠，再抓取、放置、开关或其他操作。
 
-现有 Hospital VLN 是唯一导航实现，Agent 不会另建导航系统，也不会让语言模型或 VLA
-直接生成全局坐标。当前 VLA 尚未交付，因此代码提供了明确的 backend 插槽；执行到 VLA
-步骤时会返回 `blocked`，不会把“导航到物体旁边”误报为“抓取成功”。
+现有 Hospital VLN 是正式语义导航基线；多货架 Warehouse 复用相同的
+地图/地点/规划/路径跟随组件，并通过独立场景 adapter 接入 Agent，不会让语言模型或
+VLA 直接生成全局坐标。当前 VLA 尚未交付，因此代码提供了明确的 backend 插槽；执行到
+VLA 步骤时会返回 `blocked`，不会把“导航到物体旁边”误报为“抓取成功”。
 
 这里的 G1-D 是家庭轮式双臂机器人。现阶段验收目标是先在 Isaac Sim 6.0.1 中用同构
 G1-D 数字孪生完成任务，再经过独立的 sim-to-real 安全验收接入物理机器人。仿真中的
@@ -33,8 +34,8 @@ G1DTaskAgent / RuleTaskPlanner
         +-- 远处物体操作 --> VLN 预抓取停靠 --> VLA
 
 VLN:
-HospitalVlnAdapter
-  -> 现有 hospital-vln / hospital-object-docking
+HospitalVlnAdapter / WarehouseVlnAdapter
+  -> 现有 hospital-vln / hospital-object-docking / warehouse-vln
   -> LingBot/SAM3 语义制品 + 审核数据库
   -> DeepSeek 只选择 place_id
   -> occupancy/path/Nav2 或现有 Isaac runner
@@ -52,7 +53,7 @@ PluginVlaAdapter
 
 - `g1d_agent/router.py`：判断走 VLN、VLA 或 VLN → VLA；
 - `g1d_agent/agent.py`：按顺序执行、失败即停的任务状态机；
-- `g1d_agent/adapters.py`：现有 Hospital VLN 适配器和 VLA 插件接口；
+- `g1d_agent/adapters.py`：Hospital/Warehouse VLN 适配器和 VLA 插件接口；
 - `g1d_agent/interaction.py`：严格加载“物体 + 技能”交互配置；
 - `g1d_agent/readiness.py`：VLA 启动条件与恢复动作判定；
 - `g1d_agent/supervisor.py`：现场观测、有限恢复循环和 VLA handoff；
@@ -88,6 +89,11 @@ Agent 只决定“这个阶段需要 VLN”，然后调用以下已有入口：
 ./mobilemanibench.sh hospital-object-docking \
   --headless --test --no-camera \
   --command '请停到红色方块前0.8米'
+
+# 多货架 Warehouse 区域语义导航；当前为显式 bootstrap 联调
+./mobilemanibench.sh warehouse-vln \
+  --headless --test --no-camera \
+  --command '请带我到东侧货架通道'
 ```
 
 区域导航仍使用审核地点库。物体操作前必须把 SAM3/检测结果转换成带交互面朝向和安全
@@ -96,6 +102,8 @@ Agent 只决定“这个阶段需要 VLN”，然后调用以下已有入口：
 
 当前成功导航使用 `stable_assisted`。它证明语言—地图—规划—高层控制链路，但不等于
 纯轮地接触控制或真实机器人底盘已经验收；`--wheel-physics-only` 仍是独立 P0 工作。
+Warehouse bootstrap 也不等于 LingBot RGB-only 正式建图，替换步骤和证据边界见
+`docs/WAREHOUSE_G1D_NAV.md`。
 
 ## 4. Agent 如何做决定
 
@@ -173,6 +181,10 @@ DeepSeek 仍位于现有 VLN 内部，负责把模糊地点描述约束到审核
 
 ./mobilemanibench.sh agent \
   --command '去桌边拿起红色方块'
+
+./mobilemanibench.sh agent \
+  --navigation-scene warehouse \
+  --command '请带我到东侧货架通道'
 ```
 
 计划和结果写入 `outputs/g1d_agent/mission.json`。该输出不进入 Git。

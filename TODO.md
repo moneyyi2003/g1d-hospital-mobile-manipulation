@@ -4,14 +4,16 @@
 
 ## 当前结论
 
-Hospital 语义导航 MVP 已在确定性 `stable_assisted` 模式通过，当前主线应转向
-G1-D 纯轮地接触物理控制的稳定性与回归；完成后再推进移动操作任务。根目录长期维护
-机制已经建立。Hospital TCP dashboard 已能在浏览器同步显示 Isaac chase camera、
-LingBot RGB 点云和 occupancy map 上的实时机器人轨迹，并已接入 DeepSeek 模糊地点
-理解，不依赖 WebRTC UDP。2026-07-23 的 WebRTC 排查仍确认：当前 AutoDL 公有云实例
-没有浏览器可达的 47998/UDP 媒体路径；该外部网络条件解决前，原生 WebRTC 页面仍会
-停在 `WAITING FOR STREAM`。任务级 G1-D Agent 已能把指令安全分解为 VLN、VLA 或
-VLN → VLA，并复用既有 Hospital 导航；VLA 仍等待外部团队交付，不属于当前已验收能力。
+Hospital 语义导航和多货架 Warehouse G1-D 导航已在确定性 `stable_assisted` 模式
+通过，当前主线应转向 G1-D 纯轮地接触物理控制的稳定性与回归；完成后再推进移动操作
+任务。Warehouse 已接入任务级 Agent 的场景选择，但当前地图是明确标记的 Isaac
+collision bootstrap，仍需按 Hospital 流程完成 LingBot RGB-only 正式建图和地点审核。
+Hospital TCP dashboard 已能在浏览器同步显示 Isaac chase camera、LingBot RGB 点云和
+occupancy map 上的实时机器人轨迹，并已接入 DeepSeek 模糊地点理解，不依赖 WebRTC
+UDP。2026-07-23 的 WebRTC 排查仍确认：当前 AutoDL 公有云实例没有浏览器可达的
+47998/UDP 媒体路径；该外部网络条件解决前，原生 WebRTC 页面仍会停在
+`WAITING FOR STREAM`。任务级 G1-D Agent 已能把指令安全分解为 VLN、VLA 或
+VLN → VLA；VLA 仍等待外部团队交付，不属于当前已验收能力。
 
 ## 已完成并验证
 
@@ -70,6 +72,15 @@ VLN → VLA，并复用既有 Hospital 导航；VLA 仍等待外部团队交付�
   配置错误不自动重试。
 - [x] VLA 插件支持可选 `observe_readiness` / `recover_readiness` 同会话 hook；提供
   版本化静态观测 contract 示例，只用于接口测试，不冒充真实感知。
+- [x] 审计 MobileManiBench/Isaac 场景清单并选定
+  `warehouse_multiple_shelves.usd`：主 Isaac 6.0.1 实测 8,139 prim、1,878 mesh、
+  1,878 collision prim，范围约 `24 x 38.8 m`。
+- [x] 新增 Warehouse G1-D 巡检/语义导航入口、collision bootstrap 制品、正式
+  LingBot map/place 插槽和 Agent `--navigation-scene warehouse`；物体预抓取尚未实现时
+  adapter 会 fail-closed。
+- [x] Warehouse 指令“请带我到东侧货架通道”真实 Isaac 回归成功：加载项目
+  `g1_d_robot/g1_d.usd`，3 个 waypoint、路径 22.029 m、1936 帧、位置误差
+  0.149 m、航向误差 0.146 rad；65 帧第三人称 GIF 已目视确认。
 
 ## 当前问题
 
@@ -77,8 +88,11 @@ VLN → VLA，并复用既有 Hospital 导航；VLA 仍等待外部团队交付�
   47998/UDP 映射、UDP 覆盖网络或外部 TURN relay；仅重启 Kit、设置 HTTP 代理域名或
   转发 49100/TCP 无法显示原生 Streaming 视频。三视图演示可先使用 TCP-only
   `hospital-web`；原生 WebRTC 限制详见 `docs/ISAAC_SIM_STREAMING.md`。
-- [ ] **P0：纯轮地接触导航尚未通过。** 当前 300 帧 physics probe 失败，
-  位置误差 4.941 m；需要检查轮轴方向、驱动符号、摩擦、质量/惯量、力矩上限和底盘稳定性。
+- [ ] **P0：纯轮地接触导航尚未通过。** Warehouse 探针已确认并修正导入 G1-D 的
+  root `pi` 朝向偏移和导航角速度反号。修正后 300 帧直行在第 240 帧从
+  `x=-5.00` 正确前进到 `x=-4.09`，转向也能进入 follow 状态；但短探针结束时直行目标
+  误差仍为 7.845 m、完整导航目标误差 20.293 m，未完成长路线。还需调摩擦、质量/惯量、
+  驱动力矩、制动和闭环速度，不能把 assisted 结果当作物理底盘验收。
 - [ ] **P0：两套 Isaac 依赖链并存。** 主 standalone 是 6.0.1/Python 3.12，
   MobileManiBench 环境仍是 Python 3.10/PyTorch 2.5.1+cu121 的早期兼容链；运行命令必须
   明确选择，后续需决定是否统一迁移。
@@ -102,9 +116,12 @@ VLN → VLA，并复用既有 Hospital 导航；VLA 仍等待外部团队交付�
 - [ ] **P1：物体停靠实时控制台当前只启用 Hospital runner。** 场景 profile 和前端切换
   接口已经存在，但 SimpleRoom 或其他场景仍需各自的 USD 加载、坐标系/起点、物体生成、
   地图与 live publisher 验证；不能把仅有 profile 名称视为多场景运行成功。
-- [ ] **P1：MobileManiBench 官方 G1/YCB smoke 的最新资产状态需复核。** 旧
-  `task.md` 中“Assets.zip 下载中”的记录可能已过时，应以 `doctor`、ZIP 校验和实际
-  reset/step 返回码重新验收。
+- [ ] **P1：MobileManiBench 官方 G1/YCB smoke 仍缺完整资产。**
+  2026-07-28 `./mobilemanibench.sh doctor` 为 12/15；项目 G1-D 和已有房间资产可用，
+  但官方 G1/YCB/完整 `Assets.zip` 检查未通过，不能执行官方 reset/step 验收。
+- [ ] **P1：Warehouse 正式视觉地图尚未生成。** 当前成功使用明确标记的
+  `isaac_collision_aabb_bootstrap`，墙/柱顶层 AABB 因会封死开口而被排除；需要运行
+  G1-D RGB 巡检、LingBot RGB-only 推理、SAM3 语义对齐、米制审核和正式地点库构建。
 - [ ] 生成输出不进入 Git；若运行结果需要长期保存，应记录小型 JSON 指标或建立外部制品
   存储，而不是提交 GIF、点云、地图和模型。
 
@@ -145,6 +162,9 @@ VLN → VLA，并复用既有 Hospital 导航；VLA 仍等待外部团队交付�
 
 ### 2. 纯轮地接触最小诊断
 
+- **唯一近期下一步：**把已修正的 G1-D root/轮速符号固化到统一底盘配置，记录左右轮
+  joint 实际速度、base 位姿和接触状态，先让直行与原地转向探针达到设定距离/角度并可靠
+  制动，再跑 Warehouse 22 m 路线。
 - 固定空旷平面和短时限，分别施加左轮、右轮、同向和反向速度命令。
 - 每种命令记录 wheel joint 实际速度、base 位姿、接触力和是否出现滑移/倾倒。
 - 核对右轮符号约定、轮半径 0.0848 m、轮距 0.4062 m 与 USD joint axis。
@@ -161,7 +181,7 @@ VLN → VLA，并复用既有 Hospital 导航；VLA 仍等待外部团队交付�
 ### 4. 扩展 Hospital 与移动操作
 
 - 审核主走廊 occupancy、连通性和 docking pose 后再增加地点。
-- **唯一近期下一步：**基于现有碰撞桌和动态方块，完成 G1-D 右臂关节映射与一个不接触
+- 底盘物理回归通过后，基于现有碰撞桌和动态方块完成 G1-D 右臂关节映射与一个不接触
   物体的预抓取位姿，使右手稳定到达方块侧面且不碰撞桌面；把该 IK/碰撞结果接入
   `ObjectObservationProvider`，据实标定并更新 provisional 距离区间。
 - 再完成右手闭合、接触判定和抬升至少 5 cm，然后替换为 YCB 物体。

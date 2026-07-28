@@ -5,6 +5,47 @@
 
 ## 2026-07-28
 
+### MobileManiBench 多货架 Warehouse 的 G1-D 导航
+
+- 审计本机 MobileManiBench 场景配置和可用资产，在完整官方 `Assets.zip` 缺失的条件下
+  选择 NVIDIA `warehouse_multiple_shelves.usd` 作为复杂导航场景；新增通用场景审计
+  脚本，场景以 reference 组合，避免把旧版远端 USD 直接作为 root stage。
+- 新增 `run_g1d_warehouse_vln.py` 和 `warehouse_vln/`：加载项目真实 G1-D USD，复用
+  现有地点解析、GridMap/A*、PathFollower 和 LingBot map loader，支持计划、RGB 巡检、
+  导航、GIF 和轻量运行摘要。
+- 新增带真实性声明的 collision bootstrap：只栅格化审核的 `Shelf_*` 和
+  `PalletBin_*` 顶层碰撞根并按 G1-D footprint 膨胀；墙/柱 AABB 会抹掉真实开口，故不
+  冒充正式 occupancy。无 `--allow-bootstrap` 时必须提供 LingBot map 和审核地点库。
+- 实机型 USD 探针确认导航 `+X` 与导入模型 root 相差 `pi`、导航角速度需在轮子边界
+  反号，相关转换已集中到 `warehouse_vln/kinematics.py` 并由单元测试锁定。
+- Agent 增加 `--navigation-scene hospital|warehouse` 和
+  `WarehouseVlnAdapter`。Warehouse 当前只开放区域语义导航；物体预抓取未实现时在启动
+  Isaac 前阻断，不会错误复用 Hospital 坐标。
+- 增加 `docs/WAREHOUSE_G1D_NAV.md`，记录场景选择、命令、正式
+  LingBot/SAM3 替换流程、轮子证据及物理 G1-D 的 ROS 2/安全前置条件；同步更新
+  `MOBILEMANIBENCH_SETUP.md`、`vlaandvln.md` 和维护入口。
+
+验证：
+
+- 主 Isaac Sim 6.0.1 实际组合场景成功：8,139 prim、1,878 mesh、
+  1,878 collision prim，范围约 `x=[-12,12] m`、`y=[-18,20.818] m`。
+- “请带我到东侧货架通道”加载项目 `Assets/g1_d_robot/g1_d.usd` 后成功：
+  3 个 waypoint、22.029 m、1,936 帧，位置误差 0.149 m、航向误差 0.146 rad；
+  65 帧第三人称 GIF 末帧已目视确认机器人位于货架通道。
+- Warehouse 单元测试 6/6、Agent 测试 27/27、Python 编译和 Shell 语法通过；
+  Agent plan-only 正确生成 Warehouse VLN 步骤；随后经 Agent `--execute` 再次启动
+  Isaac 并以相同误差成功完成任务。
+- 既有 Hospital 18/18、LingBot 语义导航 21/21 轻量回归通过。
+- 修正后的 300 帧物理探针中，直行和正向转弯方向正确；长路线仍未完成。
+
+已知限制：
+
+- 通过的完整导航仍是 `stable_assisted`，不能表述为纯轮地接触或物理真机验收。
+- Warehouse 当前成功制品是 Isaac collision bootstrap；正式 LingBot RGB-only
+  occupancy、SAM3 语义地点审核和实体机 ROS 2/Nav2 驱动尚未完成。
+- 远端 Warehouse URL 需要网络或本地缓存；完整 MobileManiBench 官方 G1/YCB 资产仍
+  缺失，`doctor` 为 12/15。
+
 ### VLA 现场启动门与物体—技能站位配置
 
 - Agent 从一次性 `VLN/VLA` 路由升级为两层监督：高层仍决定能力序列，操作前新增

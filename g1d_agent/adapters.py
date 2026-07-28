@@ -1,4 +1,4 @@
-"""Execution adapters for the existing Hospital VLN and future VLA backend."""
+"""Execution adapters for scene-specific VLN runners and the future VLA backend."""
 
 from __future__ import annotations
 
@@ -137,6 +137,81 @@ class HospitalVlnAdapter:
         )
 
 
+@dataclass
+class WarehouseVlnAdapter:
+    """Delegate semantic navigation to the multi-shelf Warehouse runner."""
+
+    headless: bool = True
+    test: bool = True
+    no_camera: bool = True
+    workspace: Path = ROOT
+
+    def command_for(self, step: TaskStep) -> list[str]:
+        if step.kind is not StepKind.SEMANTIC_NAVIGATION:
+            raise ValueError(
+                "Warehouse 当前只有区域语义导航；尚无物体目录和预抓取停靠配置"
+            )
+        command = [
+            str(self.workspace / "mobilemanibench.sh"),
+            "warehouse-vln",
+            "--command",
+            step.instruction,
+        ]
+        if self.headless:
+            command.append("--headless")
+        if self.test:
+            command.append("--test")
+        if self.no_camera:
+            command.append("--no-camera")
+        return command
+
+    def execute(
+        self,
+        step: TaskStep,
+        context: Mapping[str, Any] | None = None,
+    ) -> StepResult:
+        try:
+            argv = self.command_for(step)
+        except ValueError as exc:
+            return StepResult(
+                step.step_id,
+                StepStatus.BLOCKED,
+                str(exc),
+                {"agent_phase": "warehouse_capability_check"},
+            )
+        completed = subprocess.run(
+            argv,
+            cwd=self.workspace,
+            check=False,
+        )
+        if completed.returncode == 0:
+            return StepResult(
+                step.step_id,
+                StepStatus.SUCCEEDED,
+                "MobileManiBench Warehouse VLN runner 已报告到达。",
+                {
+                    "argv": argv,
+                    "returncode": completed.returncode,
+                    "handoff_artifacts": {
+                        "run_summary": str(
+                            self.workspace
+                            / "outputs/warehouse_vln/run_summary.json"
+                        ),
+                        "navigation_plan": str(
+                            self.workspace
+                            / "outputs/warehouse_vln/navigation_plan.json"
+                        ),
+                    },
+                },
+            )
+        return StepResult(
+            step.step_id,
+            StepStatus.FAILED,
+            f"Warehouse VLN runner 失败，返回码 {completed.returncode}。",
+            {"argv": argv, "returncode": completed.returncode},
+        )
+
+
 class UnavailableVlaAdapter:
     """Explicit placeholder used until the trained VLA is delivered."""
 
@@ -235,4 +310,5 @@ __all__ = [
     "StepAdapter",
     "UnavailableVlaAdapter",
     "VlaBackend",
+    "WarehouseVlnAdapter",
 ]

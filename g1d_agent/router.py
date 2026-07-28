@@ -148,7 +148,7 @@ class RuleTaskPlanner:
                             "底盘到达经 occupancy/footprint 验证的预抓取停靠位并停止"
                         ),
                         metadata={
-                            "vln_runner": "hospital-object-docking",
+                            "vln_runner": "scene_pregrasp_docking",
                             "skill": skill,
                         },
                     ),
@@ -169,9 +169,9 @@ class RuleTaskPlanner:
                         kind=StepKind.SEMANTIC_NAVIGATION,
                         instruction=command,
                         success_condition=(
-                            "现有 Hospital VLN 从审核地点库选出目标并报告到达"
+                            "所选场景 VLN 从审核地点库选出目标并报告到达"
                         ),
-                        metadata={"vln_runner": "hospital-vln"},
+                        metadata={"vln_runner": "scene_semantic_navigation"},
                     ),
                 ),
             )

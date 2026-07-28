@@ -1,4 +1,11 @@
-# MobileManiBench / Isaac Sim 4.5 本机入口
+# MobileManiBench / Isaac Sim 本机入口
+
+更新时间：2026-07-28（UTC）
+
+当前主导航仿真使用 `/root/autodl-tmp/isaacsim` 的 Isaac Sim 6.0.1 和内置
+Python 3.12；`/root/autodl-tmp/envs/mobilemanibench` 的 Python 3.10 环境只保留上游
+MobileManiBench/Isaac Lab 旧依赖链。以下命令由 `mobilemanibench.sh` 明确选择运行时，
+不要在两个 Python 中交叉导入 Isaac 包。
 
 ## 目录
 
@@ -53,6 +60,9 @@ MobileManiBench 上游提供的是移动操作任务框架（open/close/pull/pus
 需要在此基础上另外定义语言目标、导航观测/动作和成功条件；VLA 推理还需要选定并下载
 具体 VLA 权重，不能只靠仿真资产启动。
 
+当前 `./mobilemanibench.sh doctor` 为 12/15：项目 G1-D 和已有房间资产可用，但完整
+官方 G1/YCB 资产归档仍缺失。因此官方 smoke 不能仅凭脚本存在判定成功。
+
 ## SimpleRoom VLN 演示
 
 在有桌面显示的终端中启动第三人称可视化导航：
@@ -75,3 +85,24 @@ cd /root/autodl-tmp
 
 红色圆盘是语言目标，绿色线段是规划路径。运行摘要写入
 `outputs/simple_room_vln/run_summary.json`。
+
+## 多货架 Warehouse G1-D 导航
+
+当前选择 NVIDIA `warehouse_multiple_shelves.usd` 作为复杂场景。它包含三列长货架和
+多条通道，主 Isaac Sim 6.0.1 实测可通过远端 reference 组合。运行：
+
+```bash
+cd /root/autodl-tmp
+
+./mobilemanibench.sh warehouse-vln \
+  --headless --test --no-camera \
+  --command '请带我到东侧货架通道'
+
+./mobilemanibench.sh agent \
+  --navigation-scene warehouse \
+  --command '请带我到东侧货架通道'
+```
+
+当前 shell 入口默认使用显式标记的 Isaac collision bootstrap map；它只用于在正式
+LingBot/SAM3 制品到达前验证场景、机器人和导航链。RGB 巡检、正式地图替换、轮子物理
+证据和实体机边界详见 `docs/WAREHOUSE_G1D_NAV.md`。

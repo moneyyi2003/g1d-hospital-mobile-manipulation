@@ -6,15 +6,16 @@
 
 本项目在 NVIDIA Isaac Sim 中加载轮式双臂 G1-D 机器人，结合
 MobileManiBench、LingBot-Map 和语义地点库，构建可复现的语言导航与移动操作流程。
-当前阶段的主成果是 SimpleRoom 和 Hospital 场景中的中文/英文语言目标导航；后续重点是
-纯轮地接触物理控制、场景覆盖扩展，以及“导航—停靠—抓取—抬升”的移动操作闭环。
+当前阶段的主成果是 SimpleRoom、Hospital 和多货架 Warehouse 场景中的中文/英文语言
+目标导航；后续重点是纯轮地接触物理控制、正式 Warehouse RGB-only 建图，以及
+“导航—停靠—抓取—抬升”的移动操作闭环。
 
 ## 新对话恢复顺序
 
 1. 先阅读本文件和根目录 `TODO.md`。
 2. 阅读 `CHANGELOG.md` 最近一条记录，并运行 `git status --short --branch`。
-3. 根据任务类型阅读 `task.md`、`docs/HOSPITAL_SEMANTIC_NAV.md` 或
-   `MOBILEMANIBENCH_SETUP.md`。
+3. 根据任务类型阅读 `task.md`、`docs/HOSPITAL_SEMANTIC_NAV.md`、
+   `docs/WAREHOUSE_G1D_NAV.md` 或 `MOBILEMANIBENCH_SETUP.md`。
 4. 检查 `MobileManiBench` 子模块状态；该目录有独立 Git 历史。
 5. 只在确认运行时、资产和输出存在后执行耗时仿真，不要把“文件存在”当成验收成功。
 
@@ -48,8 +49,10 @@ MobileManiBench、LingBot-Map 和语义地点库，构建可复现的语言导�
 
 - `run_g1d_simple_room_vln.py`：SimpleRoom 语言导航仿真入口。
 - `run_g1d_hospital_vln.py`：Hospital 巡检、相机采集和导航入口。
+- `run_g1d_warehouse_vln.py`：多货架 Warehouse 场景审计、RGB 巡检和导航入口。
 - `simple_room_vln/`：地点解析、地图加载、规划及路径跟随公共逻辑。
 - `hospital_vln/`：Hospital 路径、正式地点库及相关测试。
+- `warehouse_vln/`：Warehouse bootstrap/正式制品边界、语义地点和 G1-D 轮子约定。
 - `g1d_agent/`：VLN/VLA 任务路由、物体—技能交互配置、VLA 启动门控和外部 backend
   接口；没有实时观测或 VLA 时必须 fail-closed。
 - `scripts/build_hospital_map.py`：LingBot 推理结果对齐、地图和预览构建。
@@ -80,6 +83,10 @@ cd /root/autodl-tmp
 ./mobilemanibench.sh hospital-survey --headless --resolution 640x360
 ./mobilemanibench.sh hospital-map
 
+# 多货架 Warehouse G1-D 确定性回归
+./mobilemanibench.sh warehouse-vln --headless --test --no-camera \
+  --command '请带我到东侧货架通道'
+
 # 有桌面/VNC 时运行第三人称演示
 ./mobilemanibench.sh hospital-demo
 
@@ -99,8 +106,10 @@ GPU 上是否已有 Isaac 进程，避免同时启动多个 Kit 实例。
   地图和正式地点库；已审核地点为 `reception`、`waiting_area`。
 - Hospital 候诊区：正式地图、`stable_assisted` 模式成功，1092 帧，
   路径 7.376 m，位置误差 0.119 m，航向误差 0.117 rad。
-- 纯轮地接触探针：300 帧失败，终点位置误差 4.941 m；这是真实的未解决项，不得把
-  assisted 模式结果表述为物理底盘验收。
+- Warehouse 东侧货架通道：collision bootstrap、`stable_assisted` 模式成功，
+  1936 帧，路径 22.029 m，位置误差 0.149 m，航向误差 0.146 rad。
+- 纯轮地接触探针：已修正 G1-D root `pi` 朝向偏移和角速度符号；300 帧直行/转向方向
+  正确，但未完成整条路线。这仍是未解决项，不得把 assisted 模式表述为物理底盘验收。
 
 以上数值来自本机 `outputs/` 中的运行摘要；输出不进 Git，重跑可能覆盖它们。
 

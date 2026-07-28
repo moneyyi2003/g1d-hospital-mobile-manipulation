@@ -16,6 +16,7 @@ from g1d_agent.adapters import (  # noqa: E402
     HospitalVlnAdapter,
     PluginVlaAdapter,
     UnavailableVlaAdapter,
+    WarehouseVlnAdapter,
 )
 from g1d_agent.agent import G1DTaskAgent  # noqa: E402
 from g1d_agent.interaction import InteractionProfileDatabase  # noqa: E402
@@ -42,6 +43,12 @@ def parse_args() -> argparse.Namespace:
         "--execute",
         action="store_true",
         help="Actually execute the generated plan; the default only prints the plan",
+    )
+    parser.add_argument(
+        "--navigation-scene",
+        choices=("hospital", "warehouse"),
+        default="hospital",
+        help="Select the existing scene-specific VLN adapter",
     )
     parser.add_argument(
         "--vla-config",
@@ -108,6 +115,7 @@ def main() -> int:
             "schema_version": 1,
             "status": MissionStatus.PLANNED.value,
             "message": "仅生成计划；加 --execute 才会启动 Isaac/VLA。",
+            "navigation_scene": args.navigation_scene,
             "plan": plan.to_dict(),
             "steps": [],
         }
@@ -145,18 +153,27 @@ def main() -> int:
         gate=VlaReadinessGate(),
         recovery=recovery,
     )
-    agent = G1DTaskAgent(
-        planner=planner,
-        vln=HospitalVlnAdapter(
+    vln = (
+        WarehouseVlnAdapter(
+            test=not args.no_test,
+            no_camera=not args.with_camera,
+        )
+        if args.navigation_scene == "warehouse"
+        else HospitalVlnAdapter(
             test=not args.no_test,
             no_camera=not args.with_camera,
             profiles=profiles,
-        ),
+        )
+    )
+    agent = G1DTaskAgent(
+        planner=planner,
+        vln=vln,
         vla=vla,
     )
 
     result = agent.execute(plan)
     payload = result.to_dict()
+    payload["navigation_scene"] = args.navigation_scene
     _write(_project_path(args.output), payload)
     print(json.dumps(payload, ensure_ascii=False, indent=2))
     if result.status is MissionStatus.SUCCEEDED:
