@@ -4,6 +4,7 @@ import tempfile
 import unittest
 
 from lingbot_nav.errors import ConfigurationError
+from lingbot_nav.models import RouteAction
 from lingbot_nav.place_db import PlaceDatabase
 
 
@@ -83,7 +84,25 @@ class PlaceCatalogTest(unittest.TestCase):
             PlaceDatabase.load(path)
         self.assertEqual(PlaceDatabase.load(path, allow_legacy=True).places[0].place_id, "a")
 
+    def test_reviewed_approach_pose_precedes_arrival_only(self):
+        value = place_value("a", 1.0)
+        value["docking_candidates"][0]["checks"]["approach_pose"] = {
+            "x": 0.0,
+            "y": 0.0,
+            "yaw": 0.0,
+            "frame_id": "map",
+        }
+        place = PlaceDatabase.load(self.write(catalog(value))).places[0]
+
+        self.assertEqual(
+            [pose.x for pose in place.navigation_poses(RouteAction.ARRIVE)],
+            [0.0, 1.0],
+        )
+        self.assertEqual(
+            [pose.x for pose in place.navigation_poses(RouteAction.PASS)],
+            [1.0],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
-

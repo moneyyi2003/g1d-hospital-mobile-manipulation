@@ -55,6 +55,19 @@ case "${command_name}" in
             "${WORKSPACE_DIR}/run_g1d_warehouse_vln.py" \
             --allow-bootstrap "$@"
         ;;
+    warehouse-vln-formal)
+        exec "${WORKSPACE_DIR}/isaacsim/python.sh" \
+            "${WORKSPACE_DIR}/run_g1d_warehouse_vln.py" "$@"
+        ;;
+    warehouse-map)
+        if [[ ! -x "${LINGBOT_ENV_DIR}/bin/python" ]]; then
+            echo "LingBot-Map environment is missing: ${LINGBOT_ENV_DIR}" >&2
+            exit 1
+        fi
+        export PYTHONPATH="${WORKSPACE_DIR}:${WORKSPACE_DIR}/lingbot_semantic_nav/src:${WORKSPACE_DIR}/lingbot_semantic_nav/third_party/lingbot-map:${PYTHONPATH:-}"
+        exec "${LINGBOT_ENV_DIR}/bin/python" \
+            "${WORKSPACE_DIR}/scripts/build_warehouse_map.py" "$@"
+        ;;
     warehouse-scene-audit)
         exec "${WORKSPACE_DIR}/isaacsim/python.sh" \
             "${WORKSPACE_DIR}/scripts/audit_mobile_scene.py" "$@"
@@ -93,6 +106,22 @@ case "${command_name}" in
     agent)
         exec python3 "${WORKSPACE_DIR}/scripts/run_g1d_agent.py" "$@"
         ;;
+    g1d-real-nav)
+        if [[ ! -f /opt/ros/humble/setup.bash ]]; then
+            echo "ROS 2 Humble is missing: /opt/ros/humble/setup.bash" >&2
+            exit 1
+        fi
+        if [[ ! -f "${WORKSPACE_DIR}/lingbot_semantic_nav/ros2_ws/install/setup.bash" ]]; then
+            echo "Build the ROS workspace before launching G1-D real navigation." >&2
+            exit 1
+        fi
+        source /opt/ros/humble/setup.bash
+        source "${WORKSPACE_DIR}/lingbot_semantic_nav/ros2_ws/install/setup.bash"
+        exec ros2 launch lingbot_semantic_nav_ros g1d_real_nav2.launch.py \
+            map:="${WORKSPACE_DIR}/outputs/warehouse_vln/lingbot_map/map.yaml" \
+            places:="${WORKSPACE_DIR}/outputs/warehouse_vln/places_formal.json" \
+            allow_hardware_output:=False "$@"
+        ;;
     hospital-map)
         if [[ ! -x "${LINGBOT_ENV_DIR}/bin/python" ]]; then
             echo "LingBot-Map environment is missing: ${LINGBOT_ENV_DIR}" >&2
@@ -116,14 +145,16 @@ case "${command_name}" in
         exec "${ENV_DIR}/bin/python" "$@"
         ;;
     help|-h|--help)
-        echo "Usage: ./mobilemanibench.sh {isaacsim|smoke|g1-d-smoke|vln|simple-room-vln|warehouse-survey|warehouse-vln|warehouse-scene-audit|hospital-survey|hospital-map|hospital-vln|hospital-demo|hospital-web|hospital-docking|hospital-object-docking|hospital-object-web|agent|doctor|convert-urdf|python} [args...]"
+        echo "Usage: ./mobilemanibench.sh {isaacsim|smoke|g1-d-smoke|vln|simple-room-vln|warehouse-survey|warehouse-map|warehouse-vln|warehouse-vln-formal|warehouse-scene-audit|hospital-survey|hospital-map|hospital-vln|hospital-demo|hospital-web|hospital-docking|hospital-object-docking|hospital-object-web|agent|g1d-real-nav|doctor|convert-urdf|python} [args...]"
         echo "  isaacsim     Launch the pinned MobileManiBench Isaac Sim GUI environment."
         echo "  smoke        Load one headless MobileManiBench G1/YCB environment."
         echo "  g1-d-smoke   Load and step the converted custom G1_D articulation."
         echo "  vln          Run the deterministic G1_D language-to-point navigation baseline."
         echo "  simple-room-vln  Navigate G1_D to a language goal in SimpleRoom (GUI by default)."
         echo "  warehouse-survey Record G1-D RGB in MobileManiBench's multi-shelf Warehouse."
-        echo "  warehouse-vln Navigate G1-D in the multi-shelf Warehouse (bootstrap by default)."
+        echo "  warehouse-map Build formal LingBot RGB-only, SAM3, occupancy, and place artifacts."
+        echo "  warehouse-vln Navigate G1-D with the explicit collision bootstrap."
+        echo "  warehouse-vln-formal Navigate G1-D with the reviewed formal occupancy/place bundle."
         echo "  warehouse-scene-audit Audit a USD scene's bounds, meshes, and colliders."
         echo "  hospital-survey  Drive G1_D through the Hospital lobby and record RGB/GIF."
         echo "  hospital-map     Run LingBot alignment/map building and render previews."
@@ -134,6 +165,7 @@ case "${command_name}" in
         echo "  hospital-object-docking Run the isolated object-relative precision docking demo."
         echo "  hospital-object-web Serve unified semantic-region/object docking live UI (port 6009)."
         echo "  agent        Plan or execute a task through the existing VLN and future VLA."
+        echo "  g1d-real-nav Launch fail-closed physical G1-D ROS 2/Nav2 (hardware output disabled)."
         echo "  doctor       Check Python, GPU, robot, USD, and official assets."
         echo "  convert-urdf Convert g1_d_description/g1_d.urdf to USD."
         echo "  python       Run a Python command inside the pinned environment."

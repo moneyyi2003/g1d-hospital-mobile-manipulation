@@ -96,6 +96,8 @@ class LanguageGoalNode(Node):
         self.tf_listener = TransformListener(self.tf_buffer, self)
         self.mission = None
         self.step_index = -1
+        self.pose_index = -1
+        self.active_poses = ()
         self.goal_handle = None
         self.cancel_requested = False
         self.mission_id = ""
@@ -138,6 +140,8 @@ class LanguageGoalNode(Node):
         self.mission = mission
         self.cancel_requested = False
         self.step_index = -1
+        self.pose_index = -1
+        self.active_poses = ()
         self.mission_id = f"mission-{time.time_ns()}"
         requested = [
             {"place_id": step.place.place_id, "action": step.action.value}
@@ -170,11 +174,23 @@ class LanguageGoalNode(Node):
         if self.step_index >= len(self.mission.steps):
             self._finish("succeeded")
             return
+        step = self.mission.steps[self.step_index]
+        self.active_poses = step.place.navigation_poses(step.action)
+        self.pose_index = 0
+        self._send_active_pose()
+
+    def _send_active_pose(self) -> None:
+        assert self.mission is not None
         if not self.nav.wait_for_server(timeout_sec=2.0):
             self._finish("failed", reason="navigate_to_pose action server unavailable")
             return
         step = self.mission.steps[self.step_index]
-        pose = step.place.entrance_pose
+        pose = self.active_poses[self.pose_index]
+        phase = (
+            "approach"
+            if self.pose_index < len(self.active_poses) - 1
+            else "destination"
+        )
         goal = NavigateToPose.Goal()
         goal.pose = PoseStamped()
         goal.pose.header.stamp = self.get_clock().now().to_msg()
@@ -188,6 +204,8 @@ class LanguageGoalNode(Node):
             step_index=self.step_index,
             place_id=step.place.place_id,
             action=step.action.value,
+            phase=phase,
+            pose=pose.to_dict(),
         )
         future = self.nav.send_goal_async(goal, feedback_callback=self._on_feedback)
         future.add_done_callback(self._on_goal_response)
@@ -213,12 +231,9 @@ class LanguageGoalNode(Node):
             distance_remaining=float(remaining) if remaining is not None else None,
         )
 
-    def _arrival_verified(self) -> tuple[bool, str]:
+    def _arrival_verified(self, target, action: RouteAction) -> tuple[bool, str]:
         if not self.verify_arrival_tf:
             return True, "tf verification disabled"
-        assert self.mission is not None
-        step = self.mission.steps[self.step_index]
-        target = step.place.entrance_pose
         try:
             transform = self.tf_buffer.lookup_transform(
                 target.frame_id, self.robot_frame, Time()
@@ -232,7 +247,7 @@ class LanguageGoalNode(Node):
         yaw_error = _angle_error(actual_yaw, target.yaw)
         # A pass-through waypoint has no orientation obligation. A requested
         # arrival does, including intermediate A in "先到 A，再到 B".
-        yaw_ok = step.action == RouteAction.PASS or yaw_error <= self.yaw_tolerance
+        yaw_ok = action == RouteAction.PASS or yaw_error <= self.yaw_tolerance
         if xy_error <= self.xy_tolerance and yaw_ok:
             return True, f"xy_error={xy_error:.3f}, yaw_error={yaw_error:.3f}"
         return False, f"arrival outside tolerance: xy={xy_error:.3f}, yaw={yaw_error:.3f}"
@@ -249,12 +264,28 @@ class LanguageGoalNode(Node):
         if result.status != GoalStatus.STATUS_SUCCEEDED:
             self._finish("failed", reason=f"Nav2 terminal status {result.status}")
             return
-        verified, detail = self._arrival_verified()
+        assert self.mission is not None
+        step = self.mission.steps[self.step_index]
+        target = self.active_poses[self.pose_index]
+        is_approach = self.pose_index < len(self.active_poses) - 1
+        verified, detail = self._arrival_verified(
+            target,
+            RouteAction.ARRIVE if is_approach else step.action,
+        )
         if not verified:
             self._finish("failed", reason=detail)
             return
-        assert self.mission is not None
-        step = self.mission.steps[self.step_index]
+        if is_approach:
+            self._publish(
+                "docking_approach_reached",
+                step_index=self.step_index,
+                place_id=step.place.place_id,
+                verification=detail,
+            )
+            self.goal_handle = None
+            self.pose_index += 1
+            self._send_active_pose()
+            return
         self._publish(
             "step_reached",
             step_index=self.step_index,
@@ -270,6 +301,8 @@ class LanguageGoalNode(Node):
         self._publish(event, **fields)
         self.mission = None
         self.step_index = -1
+        self.pose_index = -1
+        self.active_poses = ()
         self.goal_handle = None
         self.cancel_requested = False
         self.mission_id = ""

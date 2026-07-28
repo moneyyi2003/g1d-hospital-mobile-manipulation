@@ -190,34 +190,57 @@ class PathFollower:
         max_angular: float = 1.15,
         position_tolerance: float = 0.12,
         yaw_tolerance: float = 0.12,
+        waypoint_tolerance: float = 0.18,
+        min_align_angular: float = 0.0,
     ) -> None:
         if len(path) < 2:
             raise ValueError("path needs start and goal")
+        if waypoint_tolerance <= 0.0:
+            raise ValueError("waypoint tolerance must be positive")
+        if not 0.0 <= min_align_angular <= max_angular:
+            raise ValueError("minimum align angular speed is outside controller limits")
         self.path = list(path)
         self.goal_yaw = goal_yaw
         self.max_linear = max_linear
         self.max_angular = max_angular
         self.position_tolerance = position_tolerance
         self.yaw_tolerance = yaw_tolerance
+        self.waypoint_tolerance = waypoint_tolerance
+        self.min_align_angular = min_align_angular
         self.index = 1
         self.done = False
+        self.final_alignment_started = False
 
     def command(self, pose: Pose2D) -> tuple[float, float, str]:
         if self.done:
             return 0.0, 0.0, "arrived"
         while self.index < len(self.path) - 1:
-            if math.dist((pose.x, pose.y), self.path[self.index]) > 0.18:
+            if (
+                math.dist((pose.x, pose.y), self.path[self.index])
+                > self.waypoint_tolerance
+            ):
                 break
             self.index += 1
 
         goal = self.path[self.index]
         distance = math.dist((pose.x, pose.y), goal)
         if self.index == len(self.path) - 1 and distance <= self.position_tolerance:
+            self.final_alignment_started = True
+        if self.index == len(self.path) - 1 and self.final_alignment_started:
             yaw_error = wrap_angle(self.goal_yaw - pose.yaw)
             if abs(yaw_error) <= self.yaw_tolerance:
-                self.done = True
-                return 0.0, 0.0, "arrived"
-            return 0.0, max(-self.max_angular, min(self.max_angular, 1.8 * yaw_error)), "align"
+                if distance <= self.position_tolerance:
+                    self.done = True
+                    return 0.0, 0.0, "arrived"
+                self.final_alignment_started = False
+            else:
+                angular = max(
+                    -self.max_angular,
+                    min(self.max_angular, 1.8 * yaw_error),
+                )
+                if 0.0 < abs(angular) < self.min_align_angular:
+                    angular = math.copysign(self.min_align_angular, angular)
+                return 0.0, angular, "align"
 
         desired = math.atan2(goal[1] - pose.y, goal[0] - pose.x)
         heading_error = wrap_angle(desired - pose.yaw)

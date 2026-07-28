@@ -5,6 +5,51 @@
 
 ## 2026-07-28
 
+### Warehouse 正式 RGB-only 地图、纯轮路线与实体 G1-D ROS 2/Nav2 接口
+
+- G1-D 在 `warehouse_multiple_shelves.usd` 完成 188 帧 `640x360` RGB 巡检，
+  覆盖路线 32.605 m；LingBot-Map 只读取 RGB 完成 188 帧推理。Isaac 相机位姿没有作为
+  模型输入，只在推理后用于明确标注的 pose-anchored 米制融合。
+- 全局 Sim(3) 因 `0/188` 对应点落入 0.45 m 阈值而拒绝；随后以
+  `lingbot_depth_to_metric_survey_pose_anchor` 生成 372 x 617、0.05 m/cell 的正式
+  occupancy，并保留约 238.6 万个融合点。
+- 用官方 SAM3.1 multiplex 权重和 `warehouse shelf` 提示处理全部 188 帧，得到
+  548 次检测，其中 546 条通过 LingBot 深度、相机内参和巡检位姿投影到 `map`。
+- 新增正式地点构建与审核：只批准 `east_shelf_aisle` 和 `west_shelf_aisle`；
+  `loading_zone` 因目标周围 0.75 m 内没有 footprint-safe free cell 保持拒绝。地点库
+  绑定正式地图哈希，地图被替换后会 fail-closed。
+- 为朝向约束终点增加定向 approach pose；东侧路线先到 `(4,8,+pi/2)`，再直行到
+  `(4,9,+pi/2)`，避免原地 180 度终端转向引起的物理限环。Isaac runner 和 ROS 2/Nav2
+  语言目标节点都执行同一 `approach -> destination` 序列并分别验收到达位置与朝向。
+- 纯轮控制新增物理遥测、姿态稳定、停止速度和 2 秒制动漂移门槛；正式 occupancy 东侧
+  32.538 m 路线连续三次通过，每次 10,306 帧、物理路程 32.516 m、位置误差
+  0.190 m、朝向误差 0.051 rad、最大 roll/pitch 0.026/0.147 rad、制动漂移
+  0.0086 m，停止线/角速度 0.0034 m/s、0.0095 rad/s。
+- 新增实体 G1-D ROS 2/Nav2 bringup：发布 `odom -> AGV_link`、轮编码器里程计、
+  Nav2 `/scan` 障碍层、安全轮速、制动、锁存急停、硬急停释放心跳、driver/feedback
+  watchdog 与诊断；提供 arm/disarm/brake/e-stop/clear 服务。
+- 所有硬件输出默认关闭；启动时急停锁存且未 armed。缺失或过期的 driver feedback、
+  driver-ready 或硬急停心跳都会制动/锁存，`allow_hardware_output=False` 时 arm 必然
+  失败。
+
+验证：
+
+- Warehouse 轻量测试 11/11、LingBot 23/23、Hospital 18/18、Agent 27/27 通过；
+  ROS 2 包构建和安全核心测试 4/4 通过，launch 参数可完整展开。
+- 正式地图 plan-only 与审核器得到一致路径；三个独立 Isaac 输出
+  `formal_physics_5`、`formal_physics_6`、`formal_physics_7` 均满足全部物理门槛。
+- ROS 消息级零输出联调确认可发布 odom/TF，安全命令保持零且 brake 为真；完整 Nav2
+  lifecycle 在合成当前时间戳的 joint/ready/e-stop/scan 输入下进入 active，硬件输出
+  仍为零。
+
+已知限制：
+
+- 本机没有已确认的实体 G1-D 厂商底盘驱动、机器人网络、物理硬急停回路和真实
+  `/scan`。本次只完成仿真纯轮路线和 fail-closed ROS 接口，未驱动实体机器人。
+- `loading_zone` 尚未通过地点审核；必须扩展 RGB 巡检、重建地图并重新审核，不能手工
+  改为 approved。
+- VLA backend、G1-D 右臂/多指手映射和真实抓取成功判据仍等待后续交付。
+
 ### MobileManiBench 多货架 Warehouse 的 G1-D 导航
 
 - 审计本机 MobileManiBench 场景配置和可用资产，在完整官方 `Assets.zip` 缺失的条件下

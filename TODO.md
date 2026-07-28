@@ -4,10 +4,11 @@
 
 ## 当前结论
 
-Hospital 语义导航和多货架 Warehouse G1-D 导航已在确定性 `stable_assisted` 模式
-通过，当前主线应转向 G1-D 纯轮地接触物理控制的稳定性与回归；完成后再推进移动操作
-任务。Warehouse 已接入任务级 Agent 的场景选择，但当前地图是明确标记的 Isaac
-collision bootstrap，仍需按 Hospital 流程完成 LingBot RGB-only 正式建图和地点审核。
+Hospital 语义导航已经通过；多货架 Warehouse 已完成 G1-D RGB 巡检、LingBot
+RGB-only 建图、SAM3.1 语义投影、正式地点审核和 occupancy 替换。东侧货架正式定向路线
+也已在 `--wheel-physics-only` 下连续三次通过。当前唯一近期主线是把 fail-closed
+ROS 2/Nav2 接口接到已确认的实体 G1-D 厂商驱动、硬急停和真实定位传感器，先做架空轮和
+隔离场低速验收；在这些外部条件到位前不得打开硬件输出。
 Hospital TCP dashboard 已能在浏览器同步显示 Isaac chase camera、LingBot RGB 点云和
 occupancy map 上的实时机器人轨迹，并已接入 DeepSeek 模糊地点理解，不依赖 WebRTC
 UDP。2026-07-23 的 WebRTC 排查仍确认：当前 AutoDL 公有云实例没有浏览器可达的
@@ -81,6 +82,21 @@ VLN → VLA；VLA 仍等待外部团队交付，不属于当前已验收能力�
 - [x] Warehouse 指令“请带我到东侧货架通道”真实 Isaac 回归成功：加载项目
   `g1_d_robot/g1_d.usd`，3 个 waypoint、路径 22.029 m、1936 帧、位置误差
   0.149 m、航向误差 0.146 rad；65 帧第三人称 GIF 已目视确认。
+- [x] Warehouse 完成 188 帧 `640x360` G1-D RGB 巡检和 32.605 m 覆盖路线；LingBot
+  只读 RGB 完成 188 帧推理，pose 仅用于推理后的明确标注米制融合。
+- [x] Warehouse 生成 372 x 617、0.05 m/cell 正式 occupancy；SAM3.1 以
+  `warehouse shelf` 跟踪 188 帧，548 次检测中 546 条投影到 `map`。
+- [x] Warehouse 正式地点审核只开放 `east_shelf_aisle` 和
+  `west_shelf_aisle`；`loading_zone` 因 0.75 m 内无安全 free cell 保持拒绝。
+- [x] 正式地点增加定向预停靠约束；东侧路线 `(4,8) -> (4,9)` 规划 32.538 m，
+  runner 和 ROS 2/Nav2 语言目标节点都按“approach -> destination”执行。
+- [x] Warehouse 正式 occupancy 东侧路线纯轮地接触连续三次通过：每次 10,306 帧、
+  物理路程 32.516 m、位置误差 0.190 m、朝向误差 0.051 rad，最大 roll/pitch
+  0.026/0.147 rad，2 秒制动漂移 0.0086 m，停止线/角速度
+  0.0034 m/s、0.0095 rad/s。
+- [x] 新增物理 G1-D ROS 2/Nav2 bringup：`map -> odom -> AGV_link`、轮编码器里程计、
+  `/scan` 障碍层、制动/锁存急停/硬急停心跳、driver/feedback watchdog 和诊断；默认
+  硬件输出关闭且 arm 必定失败，零输出消息级联调通过。
 
 ## 当前问题
 
@@ -88,11 +104,9 @@ VLN → VLA；VLA 仍等待外部团队交付，不属于当前已验收能力�
   47998/UDP 映射、UDP 覆盖网络或外部 TURN relay；仅重启 Kit、设置 HTTP 代理域名或
   转发 49100/TCP 无法显示原生 Streaming 视频。三视图演示可先使用 TCP-only
   `hospital-web`；原生 WebRTC 限制详见 `docs/ISAAC_SIM_STREAMING.md`。
-- [ ] **P0：纯轮地接触导航尚未通过。** Warehouse 探针已确认并修正导入 G1-D 的
-  root `pi` 朝向偏移和导航角速度反号。修正后 300 帧直行在第 240 帧从
-  `x=-5.00` 正确前进到 `x=-4.09`，转向也能进入 follow 状态；但短探针结束时直行目标
-  误差仍为 7.845 m、完整导航目标误差 20.293 m，未完成长路线。还需调摩擦、质量/惯量、
-  驱动力矩、制动和闭环速度，不能把 assisted 结果当作物理底盘验收。
+- [ ] **P0：实体 G1-D 尚不能启用。** 本机没有已确认的厂商底盘驱动、机器人网络、
+  实体硬急停回路和真实 `/scan`；ROS 接口只能保持 `allow_hardware_output=False`。
+  仿真纯轮路线通过不能替代架空轮、落地低速、通信丢失制动和实体急停验收。
 - [ ] **P0：两套 Isaac 依赖链并存。** 主 standalone 是 6.0.1/Python 3.12，
   MobileManiBench 环境仍是 Python 3.10/PyTorch 2.5.1+cu121 的早期兼容链；运行命令必须
   明确选择，后续需决定是否统一迁移。
@@ -119,9 +133,9 @@ VLN → VLA；VLA 仍等待外部团队交付，不属于当前已验收能力�
 - [ ] **P1：MobileManiBench 官方 G1/YCB smoke 仍缺完整资产。**
   2026-07-28 `./mobilemanibench.sh doctor` 为 12/15；项目 G1-D 和已有房间资产可用，
   但官方 G1/YCB/完整 `Assets.zip` 检查未通过，不能执行官方 reset/step 验收。
-- [ ] **P1：Warehouse 正式视觉地图尚未生成。** 当前成功使用明确标记的
-  `isaac_collision_aabb_bootstrap`，墙/柱顶层 AABB 因会封死开口而被排除；需要运行
-  G1-D RGB 巡检、LingBot RGB-only 推理、SAM3 语义对齐、米制审核和正式地点库构建。
+- [ ] **P1：Warehouse 装卸区仍未开放。** 当前 RGB 巡检和正式 occupancy 足以审核
+  东/西货架通道，但 `(4,-10)` 周围 0.75 m 内没有 footprint-safe free cell；必须扩展
+  RGB 巡检覆盖并重新建图、审核，不能手工把该地点改成 approved。
 - [ ] 生成输出不进入 Git；若运行结果需要长期保存，应记录小型 JSON 指标或建立外部制品
   存储，而不是提交 GIF、点云、地图和模型。
 
@@ -160,23 +174,22 @@ VLN → VLA；VLA 仍等待外部团队交付，不属于当前已验收能力�
 - 用 `docs/ISAAC_SIM_STREAMING.md` 中的显式 `publicIp` 命令重启。
 - 验收浏览器 `Stream Ready`、ETLI candidate pair 和实际 UDP 流量。
 
-### 2. 纯轮地接触最小诊断
+### 2. 实体 G1-D 驱动与安全验收
 
-- **唯一近期下一步：**把已修正的 G1-D root/轮速符号固化到统一底盘配置，记录左右轮
-  joint 实际速度、base 位姿和接触状态，先让直行与原地转向探针达到设定距离/角度并可靠
-  制动，再跑 Warehouse 22 m 路线。
-- 固定空旷平面和短时限，分别施加左轮、右轮、同向和反向速度命令。
-- 每种命令记录 wheel joint 实际速度、base 位姿、接触力和是否出现滑移/倾倒。
-- 核对右轮符号约定、轮半径 0.0848 m、轮距 0.4062 m 与 USD joint axis。
-- 验收：机器人能直行和原地转向，状态有限且无 NaN；测试脚本与小型 JSON 摘要可提交，
-  大型日志和视频不提交。
+- **唯一近期下一步：**取得并确认 G1-D 厂商底盘驱动接口，在硬件输出保持关闭时把真实
+  `/joint_states`、driver-ready、硬急停释放心跳和 `/scan` 接到现有 bridge/Nav2，
+  核对单位、左右轮符号、时间戳和 TF。
+- 先验证实体硬急停能独立切断驱动力，再做架空轮方向/编码器/制动优先级测试。
+- 落地后把最大线速度限制为 `0.10 m/s`，验证直行、原地转向、松手制动、
+  0.25 s cmd 超时和 0.50 s driver/feedback/急停心跳超时。
+- 只有隔离场短路线与急停连续三次通过后，才显式设置
+  `allow_hardware_output=True` 并逐步开放正式 Warehouse 路线。
 
-### 3. 物理参数调优与回归
+### 3. Warehouse 覆盖扩展
 
-- 调整轮地材质摩擦、wheel damping/effort、底盘质心和非底盘关节保持增益。
-- 把成功参数固化为明确配置，不隐藏在运行时魔数中。
-- 用 `--wheel-physics-only` 重跑前台短路径，再跑候诊区完整路径。
-- 验收：至少连续 3 次固定种子成功，位置误差不超过 0.20 m，并保留失败时诊断信息。
+- 扩展 RGB 巡检到装卸区，重新运行 LingBot、SAM3 投影、occupancy 和地点审核。
+- 保留当前东/西通道基线；新地图若改变 map hash，旧地点库必须 fail-closed。
+- 只有装卸区 footprint、定向 approach 和从起点可达都通过才批准。
 
 ### 4. 扩展 Hospital 与移动操作
 
@@ -200,8 +213,8 @@ VLN → VLA；VLA 仍等待外部团队交付，不属于当前已验收能力�
 
 ## 每次工作结束前
 
-- [ ] 更新本文件的完成项、问题证据和下一步。
-- [ ] 更新 `CHANGELOG.md`。
-- [ ] 执行相关测试及 `git diff --check`。
-- [ ] 检查没有权重、资产、输出、日志或凭据进入暂存区。
-- [ ] `git commit` 保存可恢复状态。
+- [x] 更新本文件的完成项、问题证据和下一步。
+- [x] 更新 `CHANGELOG.md`。
+- [x] 执行相关测试及 `git diff --check`。
+- [x] 检查没有权重、资产、输出、日志或凭据进入暂存区。
+- [x] `git commit` 保存可恢复状态。

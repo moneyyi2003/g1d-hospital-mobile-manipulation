@@ -59,18 +59,30 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--steps", type=int, default=0)
     parser.add_argument("--wheel-physics-only", action="store_true")
+    parser.add_argument("--physics-brake-steps", type=int, default=120)
+    parser.add_argument("--physics-telemetry-period", type=int, default=30)
+    parser.add_argument("--physics-max-tilt-rad", type=float, default=0.35)
+    parser.add_argument("--physics-max-brake-drift", type=float, default=0.05)
+    parser.add_argument("--physics-max-stop-linear", type=float, default=0.03)
+    parser.add_argument("--physics-max-stop-angular", type=float, default=0.05)
     parser.add_argument("--no-camera", action="store_true")
     parser.add_argument("--resolution", default="480x270")
     parser.add_argument("--record-gif", type=Path)
     parser.add_argument("--record-fps", type=int, default=5)
     parser.add_argument("--position-tolerance", type=float, default=0.15)
     parser.add_argument("--yaw-tolerance", type=float, default=0.15)
+    parser.add_argument("--waypoint-tolerance", type=float, default=0.30)
+    parser.add_argument("--min-align-angular", type=float, default=1.05)
     parser.add_argument("--survey-distance-step", type=float, default=0.18)
     parser.add_argument("--survey-angle-step-deg", type=float, default=10.0)
     return parser.parse_args()
 
 
 args = parse_args()
+for path_argument in ("output_dir", "map", "places"):
+    value = getattr(args, path_argument)
+    if not value.is_absolute():
+        setattr(args, path_argument, ROOT / value)
 if args.test:
     args.headless = True
     args.allow_bootstrap = True
@@ -87,8 +99,26 @@ if not 0.02 <= args.position_tolerance <= 0.40:
     raise SystemExit("--position-tolerance must be between 0.02 and 0.40 m")
 if not 0.02 <= args.yaw_tolerance <= 0.60:
     raise SystemExit("--yaw-tolerance must be between 0.02 and 0.60 rad")
+if not 0.12 <= args.waypoint_tolerance <= 0.35:
+    raise SystemExit("--waypoint-tolerance must be between 0.12 and 0.35 m")
+if not 0.0 <= args.min_align_angular <= 1.20:
+    raise SystemExit("--min-align-angular must be between 0.0 and 1.20 rad/s")
 if not 1 <= args.record_fps <= PHYSICS_HZ:
     raise SystemExit("--record-fps must be between 1 and 60")
+if args.physics_brake_steps < 1:
+    raise SystemExit("--physics-brake-steps must be positive")
+if args.physics_telemetry_period < 1:
+    raise SystemExit("--physics-telemetry-period must be positive")
+if any(
+    value <= 0.0
+    for value in (
+        args.physics_max_tilt_rad,
+        args.physics_max_brake_drift,
+        args.physics_max_stop_linear,
+        args.physics_max_stop_angular,
+    )
+):
+    raise SystemExit("physics safety limits must be positive")
 try:
     camera_width, camera_height = (
         int(value) for value in args.resolution.lower().split("x", 1)
@@ -104,10 +134,12 @@ os.environ.setdefault("OMNI_KIT_ACCEPT_EULA", "YES")
 
 from warehouse_vln.artifacts import (
     CollisionBounds,
+    ROBOT_RADIUS_M,
     WAREHOUSE_SCENE_URL,
     WAREHOUSE_START,
     build_bootstrap_artifacts,
     build_survey_path,
+    plan_docking_path,
 )
 from warehouse_vln.kinematics import (
     ROOT_FROM_NAVIGATION_YAW_RAD,
@@ -117,6 +149,20 @@ from warehouse_vln.kinematics import (
     navigation_twist_to_wheel_speeds,
     navigation_yaw_to_root_yaw,
     root_yaw_to_navigation_yaw,
+)
+from warehouse_vln.physics import (
+    PhysicsLimits,
+    PhysicsTelemetry,
+    evaluate_physics_acceptance,
+)
+from simple_room_vln.artifacts import load_lingbot_artifacts
+from simple_room_vln.core import (
+    GridMap,
+    PathFollower,
+    Place,
+    Pose2D,
+    path_length,
+    resolve_place,
 )
 
 
@@ -128,6 +174,77 @@ if "://" not in scene_source:
     if not scene_path.is_file():
         raise FileNotFoundError(scene_path)
     scene_source = str(scene_path.resolve())
+
+
+def run_formal_plan_only() -> int:
+    """Validate and plan on the reviewed map without initializing Isaac."""
+
+    missing = [str(path) for path in (args.map, args.places) if not path.is_file()]
+    if missing:
+        raise FileNotFoundError(
+            "Formal Warehouse navigation needs LingBot/SAM3 artifacts: "
+            + ", ".join(missing)
+        )
+    grid, places = load_lingbot_artifacts(
+        args.map,
+        args.places,
+        robot_radius_m=ROBOT_RADIUS_M,
+    )
+    start = WAREHOUSE_START
+    if not grid.is_free(grid.world_to_cell(start.x, start.y)):
+        raise ValueError(
+            "formal LingBot map does not mark the reviewed start pose free"
+        )
+    target = resolve_place(args.command, places)
+    path = plan_docking_path(
+        grid,
+        (start.x, start.y),
+        target.pose,
+    )
+    payload = {
+        "schema_version": 1,
+        "scene": "MobileManiBench/warehouse_multiple_shelves",
+        "scene_source": scene_source,
+        "robot": {
+            "model": "G1-D",
+            "usd": str(ROBOT_USD),
+            "wheel_joints": [LEFT_WHEEL_JOINT, RIGHT_WHEEL_JOINT],
+            "root_from_navigation_yaw_rad": ROOT_FROM_NAVIGATION_YAW_RAD,
+            "usd_angular_sign": USD_ANGULAR_SIGN,
+        },
+        "map_source": "lingbot_map_rgb_only_pointcloud",
+        "task": target.place_id,
+        "start_pose": {"x": start.x, "y": start.y, "yaw": start.yaw},
+        "target_pose": {
+            "x": target.pose.x,
+            "y": target.pose.y,
+            "yaw": target.pose.yaw,
+        },
+        "path": [[x, y] for x, y in path],
+        "path_length_m": path_length(path),
+        "scene_metrics": {
+            "loaded": False,
+            "reason": "formal_plan_only_does_not_initialize_isaac",
+        },
+        "source_collision_count": 0,
+        "used_collision_count": 0,
+    }
+    args.output_dir.mkdir(parents=True, exist_ok=True)
+    target_path = args.output_dir / "navigation_plan.json"
+    target_path.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    print("Map source: lingbot_map_rgb_only_pointcloud")
+    print(f"Resolved {args.command!r} -> {target.place_id}")
+    print(f"Planned {len(path)} waypoints, length={path_length(path):.3f} m")
+    print(f"Plan: {target_path}")
+    return 0
+
+
+if args.plan_only and not args.allow_bootstrap:
+    raise SystemExit(run_formal_plan_only())
+
 
 from isaacsim import SimulationApp
 
@@ -155,23 +272,12 @@ from isaacsim.core.simulation_manager import SimulationManager
 from isaacsim.robot.experimental.wheeled_robots.robots import WheeledRobot
 from pxr import Gf, Usd, UsdGeom, UsdLux, UsdPhysics
 
-from simple_room_vln.artifacts import load_lingbot_artifacts
-from simple_room_vln.core import (
-    GridMap,
-    PathFollower,
-    Place,
-    Pose2D,
-    path_length,
-    resolve_place,
-)
-
-
 def command_to_wheels(linear: float, angular: float) -> np.ndarray:
     left, right = navigation_twist_to_wheel_speeds(linear, angular)
     return np.array([left, right], dtype=np.float32)
 
 
-def configure_joint_drives(robot: WheeledRobot) -> None:
+def configure_joint_drives(robot: WheeledRobot) -> list[int]:
     names = robot.dof_names
     stiffness = np.zeros(len(names), dtype=np.float32)
     damping = np.zeros(len(names), dtype=np.float32)
@@ -193,6 +299,7 @@ def configure_joint_drives(robot: WheeledRobot) -> None:
     ).numpy().tolist()
     robot.set_dof_max_efforts([40.0, 40.0], dof_indices=wheel_indices)
     robot.set_dof_position_targets(robot.get_dof_positions().numpy()[0])
+    return wheel_indices
 
 
 def assisted_step(
@@ -237,10 +344,10 @@ def set_assisted_pose(
     )
 
 
-def robot_pose(robot: WheeledRobot) -> Pose2D:
-    positions, orientations = robot.get_world_poses()
-    position = positions.numpy()[0]
-    quaternion = orientations.numpy()[0]
+def pose_from_root(
+    position: Sequence[float],
+    quaternion: Sequence[float],
+) -> Pose2D:
     root_yaw = math.atan2(
         2.0
         * (
@@ -259,6 +366,40 @@ def robot_pose(robot: WheeledRobot) -> Pose2D:
         float(position[1]),
         root_yaw_to_navigation_yaw(float(root_yaw)),
     )
+
+
+def robot_pose(robot: WheeledRobot) -> Pose2D:
+    positions, orientations = robot.get_world_poses()
+    return pose_from_root(
+        positions.numpy()[0],
+        orientations.numpy()[0],
+    )
+
+
+def physics_measurement(
+    robot: WheeledRobot,
+    wheel_indices: Sequence[int],
+) -> dict:
+    positions, orientations = robot.get_world_poses()
+    linear_velocities, angular_velocities = robot.get_velocities()
+    wheel_velocities = robot.get_dof_velocities(
+        dof_indices=list(wheel_indices)
+    )
+    position = positions.numpy()[0]
+    quaternion = orientations.numpy()[0]
+    return {
+        "pose": pose_from_root(position, quaternion),
+        "quaternion_wxyz": [float(value) for value in quaternion],
+        "linear_velocity_mps": [
+            float(value) for value in linear_velocities.numpy()[0]
+        ],
+        "angular_velocity_radps": [
+            float(value) for value in angular_velocities.numpy()[0]
+        ],
+        "wheel_actual_radps": [
+            float(value) for value in wheel_velocities.numpy()[0]
+        ],
+    }
 
 
 def camera_world_pose(pose: Pose2D) -> tuple[np.ndarray, np.ndarray]:
@@ -674,6 +815,7 @@ def main() -> int:
         grid, places = load_lingbot_artifacts(
             args.map,
             args.places,
+            robot_radius_m=ROBOT_RADIUS_M,
         )
         start = WAREHOUSE_START
         if not grid.is_free(grid.world_to_cell(start.x, start.y)):
@@ -690,9 +832,10 @@ def main() -> int:
         task = "warehouse_rgb_survey"
     else:
         target = resolve_place(args.command, places)
-        path = grid.plan(
+        path = plan_docking_path(
+            grid,
             (start.x, start.y),
-            (target.pose.x, target.pose.y),
+            target.pose,
         )
         goal_yaw = target.pose.yaw
         task = target.place_id
@@ -707,10 +850,11 @@ def main() -> int:
         f"Planned {len(path)} waypoints, "
         f"length={path_length(path):.3f} m"
     )
-    add_navigation_overlay(
-        path,
-        None if target is None else target.pose,
-    )
+    if not args.survey:
+        add_navigation_overlay(
+            path,
+            None if target is None else target.pose,
+        )
     plan_path = write_plan_summary(
         map_source=map_source,
         task=task,
@@ -780,7 +924,18 @@ def main() -> int:
     SimulationManager.get_physics_scenes()[0].set_enabled_gpu_dynamics(False)
     app_utils.play()
     app_utils.update_app(steps=18)
-    configure_joint_drives(robot)
+    wheel_indices = configure_joint_drives(robot)
+    physics_limits = PhysicsLimits(
+        max_tilt_rad=args.physics_max_tilt_rad,
+        max_brake_drift_m=args.physics_max_brake_drift,
+        max_stopped_linear_mps=args.physics_max_stop_linear,
+        max_stopped_angular_radps=args.physics_max_stop_angular,
+    )
+    physics_telemetry = (
+        PhysicsTelemetry(args.physics_telemetry_period)
+        if args.wheel_physics_only
+        else None
+    )
 
     pose = start
     set_assisted_pose(robot, pose, 0.0, 0.0)
@@ -827,6 +982,8 @@ def main() -> int:
         max_angular=1.20,
         position_tolerance=args.position_tolerance,
         yaw_tolerance=args.yaw_tolerance,
+        waypoint_tolerance=args.waypoint_tolerance,
+        min_align_angular=args.min_align_angular,
     )
     frame = 0
     last_label = "start"
@@ -837,9 +994,8 @@ def main() -> int:
             else pose
         )
         linear, angular, label = follower.command(observed)
-        robot.apply_wheel_actions(
-            command_to_wheels(linear, angular)
-        )
+        wheel_targets = command_to_wheels(linear, angular)
+        robot.apply_wheel_actions(wheel_targets)
         if not args.wheel_physics_only:
             pose = assisted_step(pose, linear, angular)
             set_assisted_pose(robot, pose, linear, angular)
@@ -859,6 +1015,19 @@ def main() -> int:
                 camera_axes="world",
             )
         simulation_app.update()
+        if physics_telemetry is not None:
+            measurement = physics_measurement(robot, wheel_indices)
+            current = measurement["pose"]
+            physics_telemetry.observe(
+                frame=frame,
+                pose=current,
+                quaternion_wxyz=measurement["quaternion_wxyz"],
+                commanded_twist=(linear, angular),
+                wheel_targets_radps=wheel_targets,
+                wheel_actual_radps=measurement["wheel_actual_radps"],
+                linear_velocity_mps=measurement["linear_velocity_mps"],
+                angular_velocity_radps=measurement["angular_velocity_radps"],
+            )
         if recorder is not None:
             recorder.capture(current)
         if (
@@ -887,13 +1056,35 @@ def main() -> int:
         if args.steps > 0 and frame >= args.steps:
             break
 
-    robot.apply_wheel_actions(np.zeros(2, dtype=np.float32))
-    app_utils.update_app(steps=5)
-    final_pose = (
+    zero_wheels = np.zeros(2, dtype=np.float32)
+    robot.apply_wheel_actions(zero_wheels)
+    brake_start_pose = (
         robot_pose(robot)
         if args.wheel_physics_only
         else pose
     )
+    final_measurement = None
+    if physics_telemetry is not None:
+        for brake_index in range(args.physics_brake_steps):
+            robot.apply_wheel_actions(zero_wheels)
+            simulation_app.update()
+            final_measurement = physics_measurement(robot, wheel_indices)
+            physics_telemetry.observe(
+                frame=frame + brake_index,
+                pose=final_measurement["pose"],
+                quaternion_wxyz=final_measurement["quaternion_wxyz"],
+                commanded_twist=(0.0, 0.0),
+                wheel_targets_radps=zero_wheels,
+                wheel_actual_radps=final_measurement["wheel_actual_radps"],
+                linear_velocity_mps=final_measurement["linear_velocity_mps"],
+                angular_velocity_radps=final_measurement["angular_velocity_radps"],
+                force_sample=brake_index == args.physics_brake_steps - 1,
+            )
+        assert final_measurement is not None
+        final_pose = final_measurement["pose"]
+    else:
+        app_utils.update_app(steps=5)
+        final_pose = pose
     position_error = math.dist(
         (final_pose.x, final_pose.y),
         path[-1],
@@ -904,6 +1095,60 @@ def main() -> int:
             math.cos(goal_yaw - final_pose.yaw),
         )
     )
+    physics_result = None
+    physics_success = True
+    if physics_telemetry is not None:
+        assert final_measurement is not None
+        brake_drift = math.dist(
+            (brake_start_pose.x, brake_start_pose.y),
+            (final_pose.x, final_pose.y),
+        )
+        stopped_linear = math.sqrt(
+            sum(
+                value * value
+                for value in final_measurement["linear_velocity_mps"]
+            )
+        )
+        stopped_angular = math.sqrt(
+            sum(
+                value * value
+                for value in final_measurement["angular_velocity_radps"]
+            )
+        )
+        physics_success, physics_failures = evaluate_physics_acceptance(
+            navigation_done=follower.done,
+            position_error_m=position_error,
+            yaw_error_rad=yaw_error,
+            position_tolerance_m=args.position_tolerance,
+            yaw_tolerance_rad=args.yaw_tolerance,
+            max_abs_roll_rad=physics_telemetry.max_abs_roll_rad,
+            max_abs_pitch_rad=physics_telemetry.max_abs_pitch_rad,
+            brake_drift_m=brake_drift,
+            stopped_linear_mps=stopped_linear,
+            stopped_angular_radps=stopped_angular,
+            limits=physics_limits,
+        )
+        physics_result = {
+            **physics_telemetry.to_dict(),
+            "navigation_done_before_brake": follower.done,
+            "brake_steps": args.physics_brake_steps,
+            "brake_duration_s": args.physics_brake_steps / PHYSICS_HZ,
+            "brake_drift_m": brake_drift,
+            "stopped_linear_mps": stopped_linear,
+            "stopped_angular_radps": stopped_angular,
+            "limits": {
+                "max_tilt_rad": physics_limits.max_tilt_rad,
+                "max_brake_drift_m": physics_limits.max_brake_drift_m,
+                "max_stopped_linear_mps": (
+                    physics_limits.max_stopped_linear_mps
+                ),
+                "max_stopped_angular_radps": (
+                    physics_limits.max_stopped_angular_radps
+                ),
+            },
+            "accepted": physics_success,
+            "failures": physics_failures,
+        }
     manifest = None
     if recorder is not None:
         recorder.capture(final_pose, force=True)
@@ -937,6 +1182,7 @@ def main() -> int:
             f"({len(gif_frames)} frames)"
         )
 
+    overall_success = follower.done and physics_success
     result = {
         "schema_version": 1,
         "task": task,
@@ -959,13 +1205,19 @@ def main() -> int:
             "usd_angular_sign": USD_ANGULAR_SIGN,
         },
         "map_source": map_source,
+        "controller": {
+            "position_tolerance_m": args.position_tolerance,
+            "yaw_tolerance_rad": args.yaw_tolerance,
+            "intermediate_waypoint_tolerance_m": args.waypoint_tolerance,
+            "minimum_align_angular_radps": args.min_align_angular,
+        },
         "execution_mode": (
             "wheel_physics_only"
             if args.wheel_physics_only
             else "stable_assisted"
         ),
         "camera_enabled": camera is not None,
-        "success": follower.done,
+        "success": overall_success,
         "frames": frame,
         "path_length_m": path_length(path),
         "final_pose": {
@@ -980,6 +1232,7 @@ def main() -> int:
         },
         "position_error_m": position_error,
         "yaw_error_rad": yaw_error,
+        "physics": physics_result,
         "source_collision_count": source_collision_count,
         "used_collision_count": used_collision_count,
         "survey_manifest": str(manifest) if manifest else None,
@@ -1000,10 +1253,21 @@ def main() -> int:
         encoding="utf-8",
     )
     print(
-        f"Result: success={follower.done} "
+        f"Result: success={overall_success} "
         f"position_error={position_error:.3f} m "
         f"yaw_error={yaw_error:.3f} rad"
     )
+    if physics_result is not None:
+        print(
+            "Physics: "
+            f"distance={physics_result['physical_distance_m']:.3f} m "
+            f"tilt=({physics_result['max_abs_roll_rad']:.3f},"
+            f"{physics_result['max_abs_pitch_rad']:.3f}) rad "
+            f"brake_drift={physics_result['brake_drift_m']:.4f} m "
+            f"stopped=({physics_result['stopped_linear_mps']:.4f} m/s,"
+            f"{physics_result['stopped_angular_radps']:.4f} rad/s) "
+            f"accepted={physics_result['accepted']}"
+        )
     print(f"Summary: {summary_path}")
 
     app_utils.stop()
@@ -1013,7 +1277,7 @@ def main() -> int:
             and scene_metrics["collision_prim_count"] >= 1800
         )
         if (
-            not follower.done
+            not overall_success
             or position_error > 0.20
             or not complex_scene_ok
         ):

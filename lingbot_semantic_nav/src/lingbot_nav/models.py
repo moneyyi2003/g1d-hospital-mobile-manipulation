@@ -83,6 +83,7 @@ class DockingCandidate:
     occupancy_status: str
     reachable: bool
     review_status: str
+    approach_pose: Pose2D | None = None
 
     def __post_init__(self) -> None:
         if not self.candidate_id.strip():
@@ -99,6 +100,13 @@ class DockingCandidate:
         if self.review_status not in {"pending", "accepted", "rejected"}:
             raise ConfigurationError(
                 f"Unsupported docking review status: {self.review_status!r}"
+            )
+        if (
+            self.approach_pose is not None
+            and self.approach_pose.frame_id != self.pose.frame_id
+        ):
+            raise ConfigurationError(
+                "Docking approach and destination poses must use the same frame"
             )
 
     @property
@@ -124,20 +132,28 @@ class DockingCandidate:
                 occupancy_status=str(checks["occupancy_status"]),
                 reachable=bool(checks["reachable"]),
                 review_status=str(review["status"]),
+                approach_pose=(
+                    Pose2D.from_mapping(checks["approach_pose"], default_frame)
+                    if isinstance(checks.get("approach_pose"), Mapping)
+                    else None
+                ),
             )
         except (KeyError, TypeError, ValueError) as exc:
             raise ConfigurationError(f"Invalid docking candidate: {value!r}") from exc
 
     def to_dict(self) -> dict[str, Any]:
+        checks = {
+            "clearance_m": self.clearance_m,
+            "footprint_radius_m": self.footprint_radius_m,
+            "occupancy_status": self.occupancy_status,
+            "reachable": self.reachable,
+        }
+        if self.approach_pose is not None:
+            checks["approach_pose"] = self.approach_pose.to_dict()
         return {
             "id": self.candidate_id,
             "pose": self.pose.to_dict(),
-            "checks": {
-                "clearance_m": self.clearance_m,
-                "footprint_radius_m": self.footprint_radius_m,
-                "occupancy_status": self.occupancy_status,
-                "reachable": self.reachable,
-            },
+            "checks": checks,
             "review": {"status": self.review_status},
         }
 
@@ -243,6 +259,20 @@ class Place:
             "docking_candidates": [item.to_dict() for item in self.docking_candidates],
             "selected_docking_candidate": self.selected_docking_candidate,
         }
+
+    def navigation_poses(self, action: RouteAction) -> tuple[Pose2D, ...]:
+        """Return an optional reviewed approach followed by the destination."""
+
+        if action != RouteAction.ARRIVE or not self.docking_candidates:
+            return (self.entrance_pose,)
+        selected = next(
+            item
+            for item in self.docking_candidates
+            if item.candidate_id == self.selected_docking_candidate
+        )
+        if selected.approach_pose is None:
+            return (self.entrance_pose,)
+        return (selected.approach_pose, self.entrance_pose)
 
 
 @dataclass(frozen=True)

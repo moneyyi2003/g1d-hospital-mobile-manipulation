@@ -19,10 +19,16 @@ NVIDIA 远端资产中的
 - 加载的机器人是 `/root/autodl-tmp/Assets/g1_d_robot/g1_d.usd`，不是
   MobileManiBench 自带 G1。
 
-已完成的确定性回归为“请带我到东侧货架通道”：规划 3 个 waypoint、路径
-22.029 m，`stable_assisted` 在 1,936 帧到达，位置误差 0.149 m、航向误差
-0.146 rad。该结果验证场景、G1-D、语义目标、地图、规划和高层执行已经连通，不代表
-纯轮地接触底盘或物理真机已经验收。
+Bootstrap 路线“请带我到东侧货架通道”已经在 `--wheel-physics-only` 下连续三次通过。
+该模式只写左右轮目标，路径跟随和验收读取物理实体 G1-D 的实际 root 位姿，不进行
+assisted 平面位姿写入。三次结果一致：物理路程 22.289 m、最终位置误差 0.192 m、
+航向误差 0.169 rad、最大 roll/pitch 约 0.023/0.146 rad；零轮速制动 2 秒后的漂移
+0.007 m，停止线/角速度约 0.0042 m/s、0.0115 rad/s。
+
+正式视觉地图也已生成并替换默认正式插槽。它审核开放东/西货架通道；未被巡检路线覆盖的
+装卸区保持 `rejected`。正式东侧路线采用“预停靠点 `(4,8)` → docking pose `(4,9)`”
+的定向末段，并在纯轮地接触模式连续三次通过。物理真机接口已经实现，但尚无厂商驱动和
+实体安全验收，因此不能表述为物理机器人已经运动。
 
 ## 2. 实现组成
 
@@ -32,6 +38,9 @@ NVIDIA 远端资产中的
   巡检路径。
 - `warehouse_vln/kinematics.py`：G1-D 导航坐标与导入 USD 的底盘朝向、轮子符号和几何
   参数。
+- `warehouse_vln/physics.py`：物理路程、倾斜、轮速、制动漂移和停止速度验收。
+- `warehouse_vln/formal_places.py`：正式 occupancy 上的 footprint、连通性和地点审核。
+- `scripts/build_warehouse_map.py`：LingBot、对齐、occupancy、SAM3 投影、地点库和预览。
 - `scripts/audit_mobile_scene.py`：组合任意 USD 并统计范围、mesh 和碰撞。
 - `g1d_agent/adapters.py`：`WarehouseVlnAdapter`；Agent 的纯区域导航步骤可以选择
   Warehouse，物体预抓取在该场景尚未实现时会 fail-closed。
@@ -62,15 +71,21 @@ cd /root/autodl-tmp
   --headless --test --no-camera \
   --command '请带我到东侧货架通道'
 
+# 使用正式 RGB-only 地图；不带 --allow-bootstrap
+./mobilemanibench.sh warehouse-vln-formal \
+  --headless --no-camera --wheel-physics-only \
+  --steps 12000 --position-tolerance 0.20 --yaw-tolerance 0.20 \
+  --command '请带我到东侧货架通道'
+
 # 让 Agent 选择 Warehouse VLN；默认只输出计划
 ./mobilemanibench.sh agent \
   --navigation-scene warehouse \
   --command '请带我到东侧货架通道'
 ```
 
-`mobilemanibench.sh warehouse-vln` 当前显式启用
-`--allow-bootstrap`，用于在正式 LingBot 制品完成前保证场景联调可运行。输出位于
-`outputs/warehouse_vln/`，不进入 Git。
+`mobilemanibench.sh warehouse-vln` 始终显式启用 bootstrap，只用于基线和碰撞图诊断；
+正式回归必须使用 `warehouse-vln-formal`。输出位于 `outputs/warehouse_vln/`，不进入
+Git。
 
 ## 4. Bootstrap 地图的真实性边界
 
@@ -89,9 +104,9 @@ cd /root/autodl-tmp
 
 正式导航不得把这个标记改名为 LingBot 或声称它来自 RGB。
 
-## 5. 用现有 LingBot/SAM3 链替换 Bootstrap
+## 5. 已完成的 LingBot/SAM3 正式地图
 
-建议按 Hospital 已验证流程执行：
+已按 Hospital 的真实性边界执行以下流水线：
 
 1. 运行 Warehouse RGB 巡检，让 G1-D 头部相机覆盖两条长货架通道：
 
@@ -100,30 +115,32 @@ cd /root/autodl-tmp
      --headless --resolution 640x360
    ```
 
-2. 将 `outputs/warehouse_vln/survey/` 中的 RGB 和 manifest 送入现有
-   LingBot-Map RGB-only 推理；相机位姿只能在推理后用于米制 Sim(3) 对齐，不能冒充
-   纯视觉全局建图。
-3. 用 SAM3 识别货架、托盘、装卸区和后续操作物体，把语义与 LingBot 点云/region 对齐。
-4. 审核 occupancy map 的通道开口、连通性和尺度，输出 ROS map YAML/PGM。
-5. 审核每个地点的 `place_id`、别名、区域和面向通道的 docking pose，生成
-   `places_formal.json`。语言模型只能返回这些 ID。
-6. 将正式制品放到默认位置：
+2. 188 张 `640x360` RGB 覆盖 32.605 m 巡检路线。manifest 明确
+   `rgb_is_only_model_input=true`。
+3. LingBot-Map 只读取 RGB，完成 188 帧推理；全局 Sim(3) 因 0/188 对应点满足
+   0.45 m 阈值而被拒绝，随后使用明确标注的离线 survey-pose anchored 深度融合。
+4. 生成 372 x 617、0.05 m/cell 的 ROS occupancy；188 帧保留约 239 万个点。
+5. 官方 SAM3.1 multiplex checkpoint 以 `warehouse shelf` 文本提示跟踪全部 188 帧，
+   产生 548 次检测；546 条通过 LingBot 深度置信度过滤并投影到 `map` 坐标系。
+6. 以 `0.42 m` G1-D footprint 审核地点，并要求 docking pose 朝向后方 `1.0 m`
+   的预停靠点安全、可达且能直线进入。东/西通道原始 pose 无需 snap，定向规划路径约
+   32.538 m 和 19.004 m；装卸区在 0.75 m 内没有正式 free cell，因此拒绝。
+7. 正式制品位于：
 
    ```text
    outputs/warehouse_vln/lingbot_map/map.yaml
    outputs/warehouse_vln/places_formal.json
    ```
 
-7. 不使用 shell 的 bootstrap 包装，直接执行正式模式：
+完整构建命令：
 
-   ```bash
-   OMNI_KIT_ACCEPT_EULA=YES /root/autodl-tmp/isaacsim/python.sh \
-     /root/autodl-tmp/run_g1d_warehouse_vln.py \
-     --headless --no-camera \
-     --map /root/autodl-tmp/outputs/warehouse_vln/lingbot_map/map.yaml \
-     --places /root/autodl-tmp/outputs/warehouse_vln/places_formal.json \
-     --command '请带我到东侧货架通道'
-   ```
+```bash
+./mobilemanibench.sh warehouse-map --stage all
+```
+
+已有 LingBot/SAM3 制品时可分别运行 `--stage align|map|project|places|render`。SAM3 是
+实际模型输出，不是根据场景真值伪造的标签；相机位姿没有进入 LingBot 或 SAM3 推理，只在
+之后用于米制几何融合。
 
 runner 在没有 `--allow-bootstrap` 时会要求两个正式文件都存在，并检查审核起点在
 occupancy 中为可行区域；缺少制品会直接失败。
@@ -136,18 +153,28 @@ occupancy 中为可行区域；缺少制品会直接失败。
 - 导航正角速度在差速轮边界需要乘 `-1`；
 - 轮半径为 `0.0848 m`，轮距为 `0.4062 m`。
 
-修正后，300 帧直行探针从 `x=-5.0 m` 正确移动到约 `x=-4.09 m`，转向探针也从正向
-转弯进入路径跟随；但短探针没有完成 22 m 任务，尚未形成纯轮地接触导航验收。
+纯轮物理验收还要求导航完成、目标误差、roll/pitch、制动漂移和最终停止速度同时通过；
+只到达坐标但没有可靠制动仍算失败。22 m bootstrap 路线和 32.538 m 正式 occupancy
+定向路线均已分别连续三次通过。正式路线三次结果完全一致：
 
-当前“真实机器人”指在 Isaac 中加载项目真实 G1-D 结构的数字孪生。要把相同 VLN 跑到
-物理 G1-D，还必须单独完成：
+- 10,306 帧，物理实体实际行驶 32.516 m；
+- 位置误差 0.190 m，朝向误差 0.051 rad；
+- 最大 roll/pitch 0.026/0.147 rad；
+- 零轮速制动 2 秒漂移 0.0086 m；
+- 停止线/角速度 0.0034 m/s、0.0095 rad/s；
+- `physics.accepted=true`，失败列表为空。
 
-1. ROS 2 底盘驱动和速度/制动接口；
-2. `map -> odom -> base_link` TF、轮速里程计和定位；
-3. Nav2 footprint、速度/加速度、局部避障和恢复参数；
-4. 相机标定、时间同步、LingBot/SAM3 的真实观测坐标转换；
-5. 急停、碰撞限速、人工接管和低速隔离场验收；
-6. 直行、原地转向、制动和至少三次固定路线重复性测试。
+早期直接到 `(4,9,+pi/2)` 的路线从目标北侧向南接近，末端需要原地转 180°，会在位置
+阈值边缘形成“对齐—重新靠近”极限环。正式地点审核现在保存 `(4,8,+pi/2)` 预停靠点，
+runner 与 ROS 2 语言目标节点都先提交预停靠，再沿审核朝向进入最终点。
 
-实体机执行器桥接和这些安全项尚未接入，因此不能将当前 Isaac 成功描述为物理真机已经
-在 Warehouse 中完成导航。
+物理 G1-D 的 ROS 2 接口已经提供：
+
+- `map -> odom -> AGV_link` TF 和轮编码器 `/odom`；
+- Nav2 RPP、`0.42 m` footprint、速度/加速度和 `/scan` 障碍层；
+- cmd_vel 看门狗、软件制动、锁存急停、硬急停心跳、driver ready 和反馈时效检查；
+- 默认 `allow_hardware_output=False`，启动时急停锁存且未 arm。
+
+本机仍没有 G1-D 厂商底盘驱动、真实 `/scan`、机器人网络和硬急停确认，所以实际硬件
+输出没有开启，也没有执行实体路线。接口、topic/service 契约和真机使能顺序详见
+`docs/G1D_REAL_ROS2_NAV.md`。

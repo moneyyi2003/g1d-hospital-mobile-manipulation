@@ -90,9 +90,10 @@ Agent 只决定“这个阶段需要 VLN”，然后调用以下已有入口：
   --headless --test --no-camera \
   --command '请停到红色方块前0.8米'
 
-# 多货架 Warehouse 区域语义导航；当前为显式 bootstrap 联调
-./mobilemanibench.sh warehouse-vln \
-  --headless --test --no-camera \
+# 多货架 Warehouse 正式 RGB-only 地图导航
+./mobilemanibench.sh warehouse-vln-formal \
+  --headless --no-camera --wheel-physics-only \
+  --steps 12000 --position-tolerance 0.20 --yaw-tolerance 0.20 \
   --command '请带我到东侧货架通道'
 ```
 
@@ -100,9 +101,11 @@ Agent 只决定“这个阶段需要 VLN”，然后调用以下已有入口：
 距离的 SE(2) 预抓取停靠位，再检查 footprint、occupancy 和路径可达性。不能把任意检测
 中心点直接交给底盘。
 
-当前成功导航使用 `stable_assisted`。它证明语言—地图—规划—高层控制链路，但不等于
-纯轮地接触控制或真实机器人底盘已经验收；`--wheel-physics-only` 仍是独立 P0 工作。
-Warehouse bootstrap 也不等于 LingBot RGB-only 正式建图，替换步骤和证据边界见
+Warehouse 的 bootstrap 和正式 occupancy 路线都已在 `--wheel-physics-only` 下分别
+连续三次通过，同时满足目标误差、倾斜、制动漂移和停止速度判据。正式路线使用审核的
+预停靠点沿 docking yaw 进入目标，三次均为 10,306 帧、32.516 m 物理路程、
+0.190 m/0.051 rad 位置/朝向误差。188 帧 G1-D RGB 巡检、LingBot RGB-only 推理、
+SAM3.1 货架语义投影和正式地点审核也已完成。证据边界见
 `docs/WAREHOUSE_G1D_NAV.md`。
 
 ## 4. Agent 如何做决定
@@ -151,7 +154,8 @@ DeepSeek 仍位于现有 VLN 内部，负责把模糊地点描述约束到审核
 
 ### 4.2 VLA 启动门
 
-现场观测统一在 `base_link` 下表达，距离定义为底盘中心到物体中心。只有以下检查全部
+现场观测统一在导航底盘坐标下表达：Isaac 集成可使用 `base_link` 适配层，物理 G1-D
+使用 URDF 真实根 frame `AGV_link`。距离定义为底盘中心到物体中心。只有以下检查全部
 通过才生成 `start_vla`：
 
 ```text
@@ -375,7 +379,8 @@ backend 的操作循环。不能依赖关闭并重开场景来声称连续移动
 
 迁移顺序：
 
-1. 校准 `map -> odom -> base_link -> right_wrist -> camera` 坐标链。
+1. 校准物理链 `map -> odom -> AGV_link -> right_wrist -> camera`；若 VLA 内部使用
+   `base_link`，必须提供显式静态变换并记录版本。
 2. 核对物理机器人关节名称、方向、零点、限位和控制周期。
 3. 用 recorded observation 做离线推理，不下发动作。
 4. 在仿真回放相同动作，检查动作缩放和关节映射。
@@ -385,7 +390,10 @@ backend 的操作循环。不能依赖关闭并重开场景来声称连续移动
 8. 先使用软物体、低速和隔离工作区，再逐步验证导航—停靠—抓取闭环。
 
 物理机器人验收必须单独记录，不能沿用 Isaac 的 `stable_assisted` 指标。尤其是当前
-纯轮地接触导航尚未通过，必须在接真机底盘前完成轮轴方向、摩擦、速度闭环和制动验证。
+纯轮地接触 bootstrap 与正式 occupancy 路线均已连续三次通过，但实体 G1-D 尚无厂商
+驱动、硬急停和现场低速验收。ROS 2/Nav2、TF、轮里程计、制动和急停接口现已默认断能
+接入，详见
+`docs/G1D_REAL_ROS2_NAV.md`。
 
 ## 10. 近期建议验收顺序
 
@@ -394,4 +402,5 @@ backend 的操作循环。不能依赖关闭并重开场景来声称连续移动
 3. VLA 到货后先验证 `ready()`、观测形状和动作映射，不启动完整任务。
 4. 单独验收 VLA 抓取与抬升。
 5. 用本 Agent 验收 `VLN → VLA`，并确认导航失败会阻止操作。
-6. 完成纯轮地物理底盘和真机安全桥后，再开始物理 G1-D 联调。
+6. 在现有 fail-closed 真机桥上接入厂商驱动并完成硬急停、架空轮和隔离场验收后，再开始
+   物理 G1-D 运动联调。

@@ -6,7 +6,10 @@ except ImportError:  # pragma: no cover
     np = None
 
 from lingbot_nav.errors import ConfigurationError
-from lingbot_nav.mapping.mask_projection import project_mask_to_map
+from lingbot_nav.mapping.mask_projection import (
+    project_mask_to_map,
+    project_pose_anchored_mask_to_map,
+)
 
 
 @unittest.skipIf(np is None, "NumPy mapping extra is not installed")
@@ -28,6 +31,27 @@ class MaskProjectionTest(unittest.TestCase):
             project_mask_to_map(
                 np.ones((2, 2)), np.ones((3, 3, 3)), np.eye(4), scale_m_per_unit=1
             )
+
+    def test_pose_anchored_projection_uses_offline_camera_pose(self):
+        mask = np.asarray([[True, False], [False, False]])
+        depth = np.ones((2, 2), dtype=float)
+        intrinsic = np.asarray(
+            [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
+        )
+        camera_pose = {
+            "position": [10.0, 20.0, 1.5],
+            "orientation_wxyz": [1.0, 0.0, 0.0, 0.0],
+        }
+
+        projected = project_pose_anchored_mask_to_map(
+            mask,
+            depth,
+            intrinsic,
+            camera_pose,
+            scale_m_per_unit=2.0,
+        )
+
+        np.testing.assert_allclose(projected, [[12.0, 20.0, 1.5]])
 
 
 if __name__ == "__main__":

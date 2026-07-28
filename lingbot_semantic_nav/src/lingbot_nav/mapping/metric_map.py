@@ -34,6 +34,7 @@ def build_metric_occupancy_map(
     robot_obstacle_min_height_m: float = 0.12,
     robot_obstacle_max_height_m: float = 1.80,
     survey_manifest: str | Path | None = None,
+    traversed_footprint_clearance_m: float = 0.40,
 ) -> dict[str, Any]:
     output = Path(output_directory).expanduser().resolve()
     alignment_path = Path(alignment_file).expanduser().resolve()
@@ -78,7 +79,7 @@ def build_metric_occupancy_map(
             [frame["robot_pose"]["x"], frame["robot_pose"]["y"]]
             for frame in manifest_payload["frames"]
         ]
-        footprint_clearance_m = 0.40
+        footprint_clearance_m = traversed_footprint_clearance_m
         grid = clear_traversed_footprints(
             grid, robot_positions, radius_m=footprint_clearance_m
         )

@@ -9,7 +9,7 @@ import math
 from pathlib import Path
 from typing import Iterable, Sequence
 
-from simple_room_vln.core import GridMap, Place, Pose2D
+from simple_room_vln.core import GridMap, Place, Pose2D, path_length
 
 
 WAREHOUSE_SCENE_URL = (
@@ -21,6 +21,7 @@ MAP_BOUNDS = (-11.8, -17.8, 11.8, 20.5)
 RESOLUTION_M = 0.10
 ROBOT_RADIUS_M = 0.42
 ROBOT_VERTICAL_RANGE_M = (0.08, 1.55)
+DOCKING_APPROACH_DISTANCE_M = 1.0
 
 WAREHOUSE_START = Pose2D(-5.0, -10.0, 0.0)
 
@@ -183,7 +184,9 @@ def snap_pose_to_free(
     return Pose2D(x, y, pose.yaw)
 
 
-def _requested_places() -> tuple[Place, ...]:
+def requested_places() -> tuple[Place, ...]:
+    """Return the measured semantic-region poses awaiting map validation."""
+
     return (
         Place(
             "east_shelf_aisle",
@@ -222,6 +225,52 @@ def _requested_places() -> tuple[Place, ...]:
             Pose2D(4.0, -10.0, 0.0),
         ),
     )
+
+
+def docking_approach_pose(
+    target: Pose2D,
+    *,
+    distance_m: float = DOCKING_APPROACH_DISTANCE_M,
+) -> Pose2D:
+    """Return a pre-docking pose behind the target's reviewed heading."""
+
+    if not math.isfinite(distance_m) or distance_m <= 0.0:
+        raise ValueError("docking approach distance must be finite and positive")
+    return Pose2D(
+        target.x - distance_m * math.cos(target.yaw),
+        target.y - distance_m * math.sin(target.yaw),
+        target.yaw,
+    )
+
+
+def plan_docking_path(
+    grid: GridMap,
+    start: tuple[float, float],
+    target: Pose2D,
+    *,
+    approach_distance_m: float = DOCKING_APPROACH_DISTANCE_M,
+) -> list[tuple[float, float]]:
+    """Plan through a safe pre-dock so the final segment matches target yaw."""
+
+    approach = docking_approach_pose(
+        target,
+        distance_m=approach_distance_m,
+    )
+    if not grid.is_free(grid.world_to_cell(approach.x, approach.y)):
+        raise ValueError(
+            f"docking approach pose is not footprint-safe: "
+            f"({approach.x:.2f}, {approach.y:.2f})"
+        )
+    route = grid.plan(start, (approach.x, approach.y))
+    final_segment = grid.plan(
+        (approach.x, approach.y),
+        (target.x, target.y),
+    )
+    if path_length(final_segment) > approach_distance_m + grid.resolution:
+        raise ValueError(
+            "formal map cannot provide a direct, heading-aligned docking segment"
+        )
+    return route + final_segment[1:]
 
 
 def _serialize_grid(
@@ -274,7 +323,7 @@ def build_bootstrap_artifacts(
             snap_pose_to_free(grid, item.pose),
             item.status,
         )
-        for item in _requested_places()
+        for item in requested_places()
     ]
     map_payload = _serialize_grid(
         grid,
@@ -336,7 +385,7 @@ def build_survey_path(
     start: Pose2D,
     places: Sequence[Place],
 ) -> list[tuple[float, float]]:
-    """Visit both long shelf aisles and return to the start."""
+    """Visit both long shelf aisles without redundant return traversals."""
 
     by_id = {place.place_id: place for place in places}
     waypoints = [
@@ -345,20 +394,10 @@ def build_survey_path(
             by_id["west_shelf_aisle"].pose.x,
             by_id["west_shelf_aisle"].pose.y,
         ),
-        (start.x, start.y),
-        (
-            by_id["loading_zone"].pose.x,
-            by_id["loading_zone"].pose.y,
-        ),
         (
             by_id["east_shelf_aisle"].pose.x,
             by_id["east_shelf_aisle"].pose.y,
         ),
-        (
-            by_id["loading_zone"].pose.x,
-            by_id["loading_zone"].pose.y,
-        ),
-        (start.x, start.y),
     ]
     combined = [waypoints[0]]
     for left, right in zip(waypoints, waypoints[1:]):
@@ -369,6 +408,7 @@ def build_survey_path(
 
 __all__ = [
     "CollisionBounds",
+    "DOCKING_APPROACH_DISTANCE_M",
     "MAP_BOUNDS",
     "RESOLUTION_M",
     "ROBOT_RADIUS_M",
@@ -378,5 +418,8 @@ __all__ = [
     "build_bootstrap_artifacts",
     "build_collision_grid",
     "build_survey_path",
+    "docking_approach_pose",
+    "plan_docking_path",
+    "requested_places",
     "snap_pose_to_free",
 ]

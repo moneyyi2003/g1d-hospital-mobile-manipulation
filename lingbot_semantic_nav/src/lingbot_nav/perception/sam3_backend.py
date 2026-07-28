@@ -7,7 +7,9 @@ import json
 from pathlib import Path
 import re
 import sys
+import time
 from typing import Any, Iterable
+import uuid
 
 from ..errors import ConfigurationError
 from ..upstreams import require_upstream
@@ -20,6 +22,8 @@ class Sam3TrackConfig:
     propagation_direction: str = "forward"
     offload_video_to_cpu: bool = True
     offload_state_to_cpu: bool = False
+    grounding_batch_size: int = 1
+    postprocess_batch_size: int = 1
 
     def validate(self) -> None:
         if self.prompt_frame < 0:
@@ -28,6 +32,8 @@ class Sam3TrackConfig:
             raise ConfigurationError("SAM3 probability threshold must be in [0, 1]")
         if self.propagation_direction not in {"forward", "backward", "both"}:
             raise ConfigurationError("Unsupported SAM3 propagation direction")
+        if min(self.grounding_batch_size, self.postprocess_batch_size) < 1:
+            raise ConfigurationError("SAM3 batch sizes must be positive")
 
 
 def _prompt_slug(index: int, prompt: str) -> str:
@@ -59,6 +65,32 @@ def _save_frame(path: Path, prompt_index: int, outputs: dict[str, Any]) -> int:
     return len(object_ids)
 
 
+def _start_session(predictor, resource: Path, config: Sam3TrackConfig) -> dict[str, str]:
+    """Work around the SAM3.1 multiplex wrapper's narrower init_state API."""
+
+    import inspect
+
+    parameters = inspect.signature(predictor.model.init_state).parameters
+    init_kwargs: dict[str, Any] = {"resource_path": str(resource)}
+    optional = {
+        "offload_video_to_cpu": config.offload_video_to_cpu,
+        "offload_state_to_cpu": config.offload_state_to_cpu,
+        "async_loading_frames": getattr(predictor, "async_loading_frames", False),
+    }
+    for name, value in optional.items():
+        if name in parameters:
+            init_kwargs[name] = value
+    inference_state = predictor.model.init_state(**init_kwargs)
+    session_id = str(uuid.uuid4())
+    predictor._all_inference_states[session_id] = {
+        "state": inference_state,
+        "session_id": session_id,
+        "start_time": time.time(),
+        "last_use_time": time.time(),
+    }
+    return {"session_id": session_id}
+
+
 def run_sam3_tracking(
     video_resource: str | Path,
     prompts: Iterable[str],
@@ -87,7 +119,7 @@ def run_sam3_tracking(
     if checkout_text not in sys.path:
         sys.path.insert(0, checkout_text)
     try:
-        from sam3.model_builder import build_sam3_video_predictor
+        from sam3.model_builder import build_sam3_predictor
     except ImportError as exc:
         raise ConfigurationError(
             "SAM3 must run in the official Python 3.12/PyTorch environment"
@@ -99,17 +131,23 @@ def run_sam3_tracking(
         if not checkpoint_path.is_file():
             raise ConfigurationError(f"SAM3 checkpoint does not exist: {checkpoint_path}")
         build_kwargs["checkpoint_path"] = str(checkpoint_path)
-    predictor = build_sam3_video_predictor(**build_kwargs)
+    predictor = build_sam3_predictor(
+        version="sam3.1",
+        use_fa3=False,
+        use_rope_real=True,
+        compile=False,
+        warm_up=False,
+        **build_kwargs,
+    )
+    if hasattr(predictor.model, "batched_grounding_batch_size"):
+        predictor.model.batched_grounding_batch_size = config.grounding_batch_size
+    if hasattr(predictor.model, "postprocess_batch_size"):
+        predictor.model.postprocess_batch_size = config.postprocess_batch_size
     prompt_records = []
     for prompt_index, prompt in enumerate(prompt_list):
         slug = _prompt_slug(prompt_index, prompt)
         prompt_root = output_root / slug
-        response = predictor.handle_request({
-            "type": "start_session",
-            "resource_path": str(resource),
-            "offload_video_to_cpu": config.offload_video_to_cpu,
-            "offload_state_to_cpu": config.offload_state_to_cpu,
-        })
+        response = _start_session(predictor, resource, config)
         session_id = response["session_id"]
         frames: dict[int, int] = {}
         try:
@@ -167,4 +205,3 @@ def run_sam3_tracking(
 
 
 __all__ = ["Sam3TrackConfig", "run_sam3_tracking"]
-

@@ -238,5 +238,13 @@ def load_approved_places(path: Path) -> list[Place]:
     return result
 
 
-def load_lingbot_artifacts(map_yaml: Path, places_json: Path) -> tuple[GridMap, list[Place]]:
-    return load_ros_grid(map_yaml), load_approved_places(places_json)
+def load_lingbot_artifacts(
+    map_yaml: Path,
+    places_json: Path,
+    *,
+    robot_radius_m: float = ROBOT_RADIUS_M,
+) -> tuple[GridMap, list[Place]]:
+    return (
+        load_ros_grid(map_yaml, robot_radius_m=robot_radius_m),
+        load_approved_places(places_json),
+    )

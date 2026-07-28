@@ -7,7 +7,8 @@
 本项目在 NVIDIA Isaac Sim 中加载轮式双臂 G1-D 机器人，结合
 MobileManiBench、LingBot-Map 和语义地点库，构建可复现的语言导航与移动操作流程。
 当前阶段的主成果是 SimpleRoom、Hospital 和多货架 Warehouse 场景中的中文/英文语言
-目标导航；后续重点是纯轮地接触物理控制、正式 Warehouse RGB-only 建图，以及
+目标导航；Warehouse 已完成正式 RGB-only 建图、语义地点审核和纯轮地接触路线验收。
+后续重点是把 fail-closed ROS 2/Nav2 接口接入实体 G1-D 厂商驱动与硬急停，以及
 “导航—停靠—抓取—抬升”的移动操作闭环。
 
 ## 新对话恢复顺序
@@ -87,6 +88,18 @@ cd /root/autodl-tmp
 ./mobilemanibench.sh warehouse-vln --headless --test --no-camera \
   --command '请带我到东侧货架通道'
 
+# Warehouse RGB-only 地图流水线和正式纯轮导航
+./mobilemanibench.sh warehouse-map --stage all
+./mobilemanibench.sh warehouse-vln-formal --headless --no-camera \
+  --command '请带我到东侧货架通道'
+
+# 实体 G1-D ROS 2/Nav2（默认禁止硬件输出）
+cd /root/autodl-tmp/lingbot_semantic_nav/ros2_ws
+source /opt/ros/humble/setup.bash
+colcon build --symlink-install --packages-select lingbot_semantic_nav_ros
+cd /root/autodl-tmp
+./mobilemanibench.sh g1d-real-nav
+
 # 有桌面/VNC 时运行第三人称演示
 ./mobilemanibench.sh hospital-demo
 
@@ -106,10 +119,14 @@ GPU 上是否已有 Isaac 进程，避免同时启动多个 Kit 实例。
   地图和正式地点库；已审核地点为 `reception`、`waiting_area`。
 - Hospital 候诊区：正式地图、`stable_assisted` 模式成功，1092 帧，
   路径 7.376 m，位置误差 0.119 m，航向误差 0.117 rad。
-- Warehouse 东侧货架通道：collision bootstrap、`stable_assisted` 模式成功，
-  1936 帧，路径 22.029 m，位置误差 0.149 m，航向误差 0.146 rad。
-- 纯轮地接触探针：已修正 G1-D root `pi` 朝向偏移和角速度符号；300 帧直行/转向方向
-  正确，但未完成整条路线。这仍是未解决项，不得把 assisted 模式表述为物理底盘验收。
+- Warehouse：完成 188 帧 G1-D RGB 巡检、LingBot RGB-only 推理、SAM3.1 语义投影、
+  372 x 617 正式 occupancy 和地点审核；开放 `east_shelf_aisle`、
+  `west_shelf_aisle`，`loading_zone` 因覆盖不足保持拒绝。
+- Warehouse 东侧货架正式定向路线：`--wheel-physics-only` 连续三次成功；每次
+  10,306 帧，规划 32.538 m、物理路程 32.516 m，位置误差 0.190 m，航向误差
+  0.051 rad，最大 roll/pitch 0.026/0.147 rad，2 秒制动漂移 0.0086 m。
+- 物理 G1-D ROS 2/Nav2 接口已完成本机 fail-closed 联调；实体机器人尚未接入厂商驱动、
+  网络、硬急停回路和真实 `/scan`，不得把仿真结果表述为真机运动验收。
 
 以上数值来自本机 `outputs/` 中的运行摘要；输出不进 Git，重跑可能覆盖它们。
 

@@ -1,0 +1,32 @@
+g1d_base_bridge:
+  ros__parameters:
+    # The vendor adapter is intentionally disconnected until an operator
+    # explicitly overrides this launch parameter and arms the bridge.
+    allow_hardware_output: false
+    cmd_vel_topic: /cmd_vel
+    joint_state_topic: /joint_states
+    driver_ready_topic: /g1d/hardware/driver_ready
+    estop_input_topic: /g1d/hardware/estop
+    hardware_command_topic: /g1d/hardware/cmd_vel
+    hardware_brake_topic: /g1d/hardware/brake
+    safe_command_topic: /g1d/safety/safe_cmd_vel
+    brake_state_topic: /g1d/safety/brake
+    status_topic: /g1d/safety/status
+    odom_topic: /odom
+    odom_frame: odom
+    base_frame: AGV_link
+    left_wheel_joint: Left_Wheel_Joint
+    right_wheel_joint: Right_Wheel_Joint
+    wheel_radius_m: 0.0848
+    wheel_base_m: 0.4062
+    left_encoder_sign: 1.0
+    right_encoder_sign: -1.0
+    max_linear_mps: 0.35
+    max_angular_radps: 0.80
+    max_linear_accel_mps2: 0.50
+    max_angular_accel_radps2: 1.20
+    command_timeout_s: 0.25
+    feedback_timeout_s: 0.50
+    driver_timeout_s: 0.50
+    estop_timeout_s: 0.50
+    control_rate_hz: 50.0

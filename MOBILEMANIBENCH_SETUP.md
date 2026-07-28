@@ -103,6 +103,18 @@ cd /root/autodl-tmp
   --command '请带我到东侧货架通道'
 ```
 
-当前 shell 入口默认使用显式标记的 Isaac collision bootstrap map；它只用于在正式
-LingBot/SAM3 制品到达前验证场景、机器人和导航链。RGB 巡检、正式地图替换、轮子物理
-证据和实体机边界详见 `docs/WAREHOUSE_G1D_NAV.md`。
+`warehouse-vln` 保留显式 collision bootstrap 基线；正式 RGB-only 地图使用：
+
+```bash
+./mobilemanibench.sh warehouse-map --stage all
+./mobilemanibench.sh warehouse-vln-formal \
+  --headless --no-camera --wheel-physics-only \
+  --steps 12000 --position-tolerance 0.20 --yaw-tolerance 0.20 \
+  --command '请带我到东侧货架通道'
+```
+
+188 帧 G1-D RGB 巡检、LingBot 推理、pose-anchored 米制融合、SAM3.1 货架跟踪和地点
+审核已经完成；东/西通道批准，未覆盖的装卸区拒绝。东侧正式定向路线在纯轮地接触模式
+连续三次通过：10,306 帧、物理路程 32.516 m、位置/朝向误差 0.190 m/0.051 rad。
+完整证据和实体机边界详见
+`docs/WAREHOUSE_G1D_NAV.md` 与 `docs/G1D_REAL_ROS2_NAV.md`。
