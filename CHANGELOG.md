@@ -3,6 +3,38 @@
 本文件记录能够影响复现、行为、接口或任务状态的重要变更。日期使用 UTC；生成物刷新和
 无行为影响的小改动不单独记录。
 
+## 2026-07-28
+
+### G1-D VLN/VLA 任务 Agent 与 VLA 接口占位
+
+- 新增任务级 `G1DTaskAgent` 和可审计 planner，把自然语言分解为纯 VLN、纯 VLA 或
+  `VLN -> VLA`；含义不明确时拒绝执行，前置步骤失败时跳过后续操作。
+- VLN adapter 只调用已经存在的 `hospital-vln` 与 `hospital-object-docking`，没有引入
+  第二套导航、坐标生成或地点解析逻辑；DeepSeek 仍只在现有 Hospital VLN 中选择审核
+  `place_id`。
+- 新增动态加载的 VLA backend 协议、禁用配置模板和 G1-D 右臂/多指手动作顺序。权重未
+  交付时操作阶段返回 `blocked`，不会把预抓取停靠误报为抓取成功。
+- Agent 把前序 VLN 结果、docking plan 和 run summary 作为 handoff context 传给 VLA；
+  `vlaandvln.md` 进一步规定最终移动操作必须在同一 Isaac 会话中完成状态接管。
+- `mobilemanibench.sh agent` 默认只生成计划，只有显式 `--execute` 才启动现有
+  Isaac/VLA adapter；任务结果以版本化 JSON 写入被忽略的 `outputs/g1d_agent/`。
+- 新增 `vlaandvln.md`，说明既有 LingBot/SAM3/语义地点库/DeepSeek/Nav2 链路、Agent
+  构造、VLA 交付清单、Isaac 6.0.1 接入步骤和物理 G1-D 的 sim-to-real 安全边界。
+
+验证：
+
+- G1-D Agent 单元测试 9/9 通过，覆盖三种路由、含义不明拒绝、VLA 未就绪阻塞、
+  导航失败阻止操作、adapter 异常结构化失败、阶段 context 传递、既有 VLN 入口委托和
+  根工作区相对路径解析。
+- 既有 Hospital 轻量测试 18/18 通过；Python 编译、Shell 语法和两个
+  `mobilemanibench.sh agent` 规划示例通过。
+
+已知限制：
+
+- 尚未执行新的大型 Isaac 仿真；本次验证了 Agent 编排和现有 VLN 回归，没有声称 VLA
+  抓取、同一 SimulationApp 连续接管、纯轮地接触底盘或物理真机已经通过。
+- 外部 VLA 团队仍需交付权重、推理环境、观测预处理、G1-D 动作映射和成功判据。
+
 ## 2026-07-24
 
 ### Hospital 移动操作桌面与动态方块场景

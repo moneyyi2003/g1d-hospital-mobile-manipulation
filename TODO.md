@@ -1,6 +1,6 @@
 # 当前任务与交接状态
 
-更新时间：2026-07-23（UTC）
+更新时间：2026-07-28（UTC）
 
 ## 当前结论
 
@@ -10,7 +10,8 @@ G1-D 纯轮地接触物理控制的稳定性与回归；完成后再推进移动
 LingBot RGB 点云和 occupancy map 上的实时机器人轨迹，并已接入 DeepSeek 模糊地点
 理解，不依赖 WebRTC UDP。2026-07-23 的 WebRTC 排查仍确认：当前 AutoDL 公有云实例
 没有浏览器可达的 47998/UDP 媒体路径；该外部网络条件解决前，原生 WebRTC 页面仍会
-停在 `WAITING FOR STREAM`。
+停在 `WAITING FOR STREAM`。任务级 G1-D Agent 已能把指令安全分解为 VLN、VLA 或
+VLN → VLA，并复用既有 Hospital 导航；VLA 仍等待外部团队交付，不属于当前已验收能力。
 
 ## 已完成并验证
 
@@ -56,6 +57,11 @@ LingBot RGB 点云和 occupancy map 上的实时机器人轨迹，并已接入 D
 - [x] 在隔离的 Hospital 物体停靠场景中搭建四腿碰撞桌和动态红色方块：桌面
   `1.0 x 0.7 x 0.08 m`、5 个静态碰撞件，方块边长 `0.2 m`、质量 `0.25 kg`；
   Isaac Sim 6.0.1 运行 120 帧后方块稳定在桌面，第三人称预览已目视确认。
+- [x] 新增 G1-D 任务级 Agent：保守路由 `VLN`、`VLA`、`VLN -> VLA`，导航阶段只调用
+  既有 `hospital-vln` / `hospital-object-docking`；VLA 提供外部 backend 配置和
+  handoff context 插槽，未接入时明确 `blocked`。
+- [x] 新增 `vlaandvln.md`，记录现有 LingBot/SAM3/语义数据库/DeepSeek 导航链、Agent
+  状态机、VLA 交付接口、Isaac 同会话接管要求与真机 sim-to-real 安全步骤。
 
 ## 当前问题
 
@@ -76,6 +82,9 @@ LingBot RGB 点云和 occupancy map 上的实时机器人轨迹，并已接入 D
   实现多候选生成/排序，默认 `hospital-web` 不得改变。
 - [ ] **P1：移动操作尚未闭环。** G1-D 右臂、多指手、IK、接触参数和抓取成功判据仍需
   单独配置，不能复用官方 G1 平行夹爪动作空间。
+- [ ] **P1：VLA backend 尚未交付。** 当前 Agent 的 VLA 插槽会 fail-closed 为
+  `blocked`；需要 VLA 团队提供权重、预处理、相机协议、G1-D 动作映射、依赖环境和成功
+  判据，并在 Hospital runner 到达后保持同一 Isaac SimulationApp 完成连续操作。
 - [ ] **P1：物体精确停靠仍依赖已知物体位姿和 assisted 控制。** demo 方块现已是带
   碰撞和质量的动态刚体，但还没有抓取/抬升控制与成功判据；后续仍需 RGB 物体检测/跟踪
   和末端视觉伺服。当前结果不能表述为纯轮地接触或 OpenVLA 抓取验收。
@@ -145,6 +154,8 @@ LingBot RGB 点云和 occupancy map 上的实时机器人轨迹，并已接入 D
   物体的预抓取位姿，使右手稳定到达方块侧面且不碰撞桌面。
 - 再完成右手闭合、接触判定和抬升至少 5 cm，然后替换为 YCB 物体。
 - 最终组合 `NAVIGATE -> ALIGN -> GRASP -> LIFT -> SUCCESS/FAIL` 单回合流程。
+- VLA 交付后按 `vlaandvln.md` 接入 `g1d_agent.vla_backend_v1`，先单独验收观察/动作
+  schema，再启用同一 Isaac 会话内的 `VLN -> VLA` 连续执行。
 
 ## 本次维护机制验收
 

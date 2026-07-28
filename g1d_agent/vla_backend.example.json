@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "enabled": false,
+  "disabled_reason": "等待 VLA 团队交付训练权重、推理代码和 G1-D 动作映射",
+  "backend": {
+    "factory": "your_vla_package.g1d_backend:create_backend",
+    "checkpoint": "/absolute/path/to/trained-vla-checkpoint",
+    "device": "cuda:0"
+  },
+  "observation": {
+    "cameras": [
+      "head_rgb",
+      "right_wrist_rgb"
+    ],
+    "robot_state": [
+      "right_arm_joint_position",
+      "right_hand_joint_position",
+      "base_pose",
+      "object_pose_or_detection"
+    ]
+  },
+  "action": {
+    "control_mode": "joint_position",
+    "rate_hz": 10,
+    "joint_order": [
+      "right_shoulder_pitch_joint",
+      "right_shoulder_roll_joint",
+      "right_shoulder_yaw_joint",
+      "right_elbow_joint",
+      "right_wrist_roll_joint",
+      "right_wrist_pitch_joint",
+      "right_wrist_yaw_joint",
+      "right_hand_thumb_0_joint",
+      "right_hand_thumb_1_joint",
+      "right_hand_thumb_2_joint",
+      "right_hand_middle_0_joint",
+      "right_hand_middle_1_joint",
+      "right_hand_index_0_joint",
+      "right_hand_index_1_joint"
+    ]
+  },
+  "safety": {
+    "require_joint_limit_clamp": true,
+    "require_velocity_limit": true,
+    "require_collision_stop": true,
+    "require_operator_enable_for_real_robot": true
+  }
+}
