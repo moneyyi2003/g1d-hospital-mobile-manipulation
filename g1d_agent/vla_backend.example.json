@@ -7,6 +7,14 @@
     "checkpoint": "/absolute/path/to/trained-vla-checkpoint",
     "device": "cuda:0"
   },
+  "integration_contract": {
+    "required_methods": ["ready", "execute"],
+    "optional_same_session_methods": [
+      "observe_readiness",
+      "recover_readiness"
+    ],
+    "interaction_profiles": "g1d_agent/interaction_profiles.json"
+  },
   "observation": {
     "cameras": [
       "head_rgb",

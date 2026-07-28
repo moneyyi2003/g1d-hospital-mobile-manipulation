@@ -1,6 +1,6 @@
 # 项目长期维护指南
 
-更新时间：2026-07-23（UTC）
+更新时间：2026-07-28（UTC）
 
 ## 项目目标
 
@@ -50,6 +50,8 @@ MobileManiBench、LingBot-Map 和语义地点库，构建可复现的语言导�
 - `run_g1d_hospital_vln.py`：Hospital 巡检、相机采集和导航入口。
 - `simple_room_vln/`：地点解析、地图加载、规划及路径跟随公共逻辑。
 - `hospital_vln/`：Hospital 路径、正式地点库及相关测试。
+- `g1d_agent/`：VLN/VLA 任务路由、物体—技能交互配置、VLA 启动门控和外部 backend
+  接口；没有实时观测或 VLA 时必须 fail-closed。
 - `scripts/build_hospital_map.py`：LingBot 推理结果对齐、地图和预览构建。
 - `mobilemanibench.sh`：统一命令入口。
 - `MobileManiBench/`：上游仓库子模块，包含本项目增加的 G1-D smoke、VLN 和 doctor

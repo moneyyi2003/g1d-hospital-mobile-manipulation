@@ -53,7 +53,12 @@ PluginVlaAdapter
 - `g1d_agent/router.py`：判断走 VLN、VLA 或 VLN → VLA；
 - `g1d_agent/agent.py`：按顺序执行、失败即停的任务状态机；
 - `g1d_agent/adapters.py`：现有 Hospital VLN 适配器和 VLA 插件接口；
+- `g1d_agent/interaction.py`：严格加载“物体 + 技能”交互配置；
+- `g1d_agent/readiness.py`：VLA 启动条件与恢复动作判定；
+- `g1d_agent/supervisor.py`：现场观测、有限恢复循环和 VLA handoff；
 - `g1d_agent/models.py`：任务计划、步骤和结果的 JSON 数据结构；
+- `g1d_agent/interaction_profiles.json`：物体距离区间、视角、安全和成功判据；
+- `g1d_agent/object_observation.example.json`：现场观测 schema 示例，不是真实感知；
 - `g1d_agent/vla_backend.example.json`：等待 VLA 团队填写的配置模板；
 - `scripts/run_g1d_agent.py`：命令行入口；
 - `g1d_agent/tests/test_agent.py`：路由和失败传播测试。
@@ -114,8 +119,49 @@ DeepSeek 仍位于现有 VLN 内部，负责把模糊地点描述约束到审核
 2. 根据每步的 `capability` 选择 VLN 或 VLA adapter。
 3. 只有前一步 `succeeded` 才能执行下一步。
 4. 导航失败时跳过 VLA，禁止机器人在未知底盘位姿上伸手。
-5. VLA 未就绪时任务为 `blocked`，不把预抓取停靠当成操作完成。
-6. 只有所有步骤都通过各自成功判据，任务才是 `succeeded`。
+5. VLA 前先解析唯一的“物体 + 技能”交互配置，再读取现场观测。
+6. `VlaReadinessGate` 检查物体、相机、距离、朝向、IK、碰撞和底盘静止。
+7. 条件不满足时给出有限恢复动作；没有恢复控制器或超过三次仍不满足则 `blocked`。
+8. VLA 未就绪时任务为 `blocked`，不把预抓取停靠当成操作完成。
+9. 只有所有步骤都通过各自成功判据，任务才是 `succeeded`。
+
+### 4.1 物体距离不是单点
+
+`interaction_profiles.json` 以 `(object_id, skill)` 为唯一键。同一个物体执行拿取、放置、
+推拉或开关时可以使用不同站位。每项至少定义：
+
+- `preferred_distance_m`：交给现有物体停靠 runner 的推荐距离；
+- `minimum_distance_m` / `maximum_distance_m`：允许启动 VLA 的距离区间；
+- 横向和朝向误差上限；
+- 检测置信度、稳定帧、位姿不确定度、观测时效和必需相机；
+- 底盘停止阈值、惯用手、运行环境和独立成功判据。
+
+当前只有 `red_cube_demo + pick` 的 provisional profile：推荐 0.80 m、允许
+0.65–0.90 m。它会覆盖用户自由文本中的距离，防止“拿起方块但停在 1.5 m”直接进入操作。
+这些数值是接口联调初值，尚未经过右臂 IK 或 VLA 实测，不能标记为
+`sim_validated`/`real_validated`。
+
+### 4.2 VLA 启动门
+
+现场观测统一在 `base_link` 下表达，距离定义为底盘中心到物体中心。只有以下检查全部
+通过才生成 `start_vla`：
+
+```text
+环境和 object_id 与 profile 一致
+物体可见，检测置信度和连续稳定帧达标
+头部/腕部必需相机存在，观测未过期
+位姿不确定度在阈值内
+碰撞检查通过
+底盘线速度和角速度低于停止阈值
+距离位于物体—技能允许区间
+横向误差和朝向误差达标
+右臂 IK 可达
+```
+
+失败会分别产生 `reacquire_object`、`wait_for_stable_pose`、`stop_base`、
+`move_closer`、`move_away`、`realign_base`、`reposition_for_reachability`、
+`block_collision` 或 `block_configuration`。`ReadinessRecoveryController` 最多做三次
+有界恢复，每次都必须重新获取观测和重新门控；碰撞或配置错误不会自动重试。
 
 ## 5. 当前使用方法
 
@@ -139,12 +185,25 @@ DeepSeek 仍位于现有 VLN 内部，负责把模糊地点描述约束到审核
 ```
 
 显式执行移动操作时，当前会先运行预抓取停靠；到 VLA 阶段后，因为默认 backend 尚未
-交付，会返回 `blocked` 和退出码 3：
+交付、实时观测 provider 尚未接入，会返回 `blocked` 和退出码 3：
 
 ```bash
 ./mobilemanibench.sh agent --execute \
   --command '去桌边拿起红色方块'
 ```
+
+可以用只用于接口测试的静态观测验证“门控通过后仍因 VLA 缺失而阻塞”：
+
+```bash
+./mobilemanibench.sh agent --execute \
+  --command '抓起眼前的红色方块' \
+  --readiness-observation g1d_agent/object_observation.example.json \
+  --vla-config g1d_agent/vla_backend.example.json
+```
+
+这个示例 JSON 不能用于仿真或真机验收；CLI 会拒绝把静态 observation 与已启用的 VLA
+backend 同时使用。真实任务必须由同一 Isaac 会话或 ROS 2 机器人桥持续实现
+`ObjectObservationProvider`。
 
 大型仿真前仍须检查是否已有 Isaac Kit 进程，避免多个实例争用 GPU。
 
@@ -160,6 +219,8 @@ DeepSeek 仍位于现有 VLN 内部，负责把模糊地点描述约束到审核
 6. 模型 reset、推理、终止和异常处理接口；
 7. 训练任务对应的成功判据和已知失败模式；
 8. 模型许可证和权重校验和。
+9. 如果 VLA 集成包同时负责现场接管，实现可选的 `observe_readiness(request)`；
+10. 如果它同时负责局部视觉停靠，实现可选的 `recover_readiness(request)`。
 
 本项目的第一版 VLA 动作范围建议只包含右臂和右手，不让 VLA 同时控制底盘：
 
@@ -213,7 +274,8 @@ class G1DVlaBackend:
         ...
 
     def execute(self, request: Mapping[str, Any]) -> Mapping[str, Any]:
-        # request["mission_context"] 包含 VLN 结果与 handoff_artifacts。
+        # request["mission_context"] 包含 VLN 结果、handoff_artifacts、
+        # interaction_profile、现场 observation 和完整 readiness 检查。
         # 内部完成 observation -> VLA -> safe action -> Isaac step 的闭环。
         ...
         return {
@@ -230,6 +292,22 @@ class G1DVlaBackend:
 def create_backend(config):
     return G1DVlaBackend(config)
 ```
+
+为了直接接入同一 Isaac 会话，backend 还可以实现：
+
+```python
+def observe_readiness(self, request):
+    # 从当前相机、TF、底盘速度、IK 和碰撞场景返回 object_observation_v1 字段。
+    return observation
+
+def recover_readiness(self, request):
+    # 根据 move_closer/move_away/realign/... 做一次有界动作，不能内部无限循环。
+    return {"status": "succeeded"}
+```
+
+CLI 会自动发现这两个方法并接到 `ReadinessVlaAdapter`；未实现时不会绕过门控，而是明确
+阻塞。建议把 SAM3/RGB-D/TF、Nav2 局部调整和 VLA 放在 integration backend 中，模型
+权重代码本身仍只负责推理。
 
 接入后：
 
@@ -256,14 +334,18 @@ backend 的操作循环。不能依赖关闭并重开场景来声称连续移动
 3. 为 G1-D 建立稳定的右臂/右手关节控制映射、默认姿态、限位和控制增益。
 4. 建立头部 RGB 和右腕 RGB 观测；若 VLA 训练使用深度或多帧历史，也必须按训练协议
    提供，不能临时猜测。
-5. 把 Isaac observation 转成 VLA 训练时完全一致的 tensor/prompt。
-6. 把 VLA action 解码成 G1-D 关节目标，再经过限位、速度限制、碰撞停止和时间戳检查。
-7. 每个控制周期执行 `observe -> infer -> validate -> apply -> step -> verify`。
-8. 在现有 Hospital runner 的 arrival 分支增加 VLA hook，使导航和操作共享同一
+5. 实现 `ObjectObservationProvider`：输出 `base_link` 下物体距离/横向/朝向误差、
+   检测稳定性、底盘速度、IK 和碰撞结果。
+6. 实现 `ReadinessRecoveryController`：只执行一次有界扫描、等待、停止、靠近、后退、
+   对齐或换站位，随后把控制权交回 Agent 重新检查。
+7. 把 Isaac observation 转成 VLA 训练时完全一致的 tensor/prompt。
+8. 把 VLA action 解码成 G1-D 关节目标，再经过限位、速度限制、碰撞停止和时间戳检查。
+9. 每个控制周期执行 `observe -> infer -> validate -> apply -> step -> verify`。
+10. 在现有 Hospital runner 的 arrival 分支增加 VLA hook，使导航和操作共享同一
    SimulationApp；该 hook 使用 Agent 生成的 VLA step 和同一份 backend 配置。
-9. 先验收 `PREGRASP -> GRASP`，再验收 `GRASP -> LIFT`，最后由 Agent 串成
+11. 先验收 `PREGRASP -> GRASP`，再验收 `GRASP -> LIFT`，最后由 Agent 串成
    `NAVIGATE -> PREGRASP_DOCK -> GRASP -> LIFT -> SUCCESS/FAIL`。
-10. 固定随机种子至少重复三次，并记录位置误差、碰撞、抓取保持帧数和物体抬升高度。
+12. 固定随机种子至少重复三次，并记录位置误差、碰撞、抓取保持帧数和物体抬升高度。
 
 如果 VLA 运行环境与 Isaac Python 不兼容，推荐让 VLA 独立运行，通过本机 ROS 2、ZeroMQ
 或 gRPC 传输版本化 observation/action 消息；Agent 的 `PluginVlaAdapter` 可以再封装这个

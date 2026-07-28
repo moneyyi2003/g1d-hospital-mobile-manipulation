@@ -3,8 +3,9 @@ from __future__ import annotations
 import unittest
 from pathlib import Path
 
-from g1d_agent.adapters import HospitalVlnAdapter
+from g1d_agent.adapters import HospitalVlnAdapter, PluginVlaAdapter
 from g1d_agent.agent import G1DTaskAgent
+from g1d_agent.interaction import InteractionProfileDatabase
 from g1d_agent.models import (
     Capability,
     MissionStatus,
@@ -13,7 +14,12 @@ from g1d_agent.models import (
     StepStatus,
 )
 from g1d_agent.router import RuleTaskPlanner
-from scripts.run_g1d_agent import ROOT, _project_path
+from scripts.run_g1d_agent import (
+    ROOT,
+    _project_path,
+    _validate_static_observation_mode,
+)
+from scripts.run_hospital_object_docking_demo import select_standoff
 
 
 class FakeAdapter:
@@ -31,6 +37,14 @@ class FakeAdapter:
 class RaisingAdapter:
     def execute(self, step, context=None):
         raise RuntimeError("backend disconnected")
+
+
+class ReadyBackend:
+    def ready(self):
+        return True
+
+    def execute(self, request):
+        return {"status": "succeeded", "success": True}
 
 
 class RuleTaskPlannerTest(unittest.TestCase):
@@ -55,6 +69,8 @@ class RuleTaskPlannerTest(unittest.TestCase):
         )
         self.assertEqual(plan.steps[0].kind, StepKind.PREGRASP_DOCKING)
         self.assertEqual(plan.steps[1].kind, StepKind.MANIPULATION)
+        self.assertEqual(plan.steps[0].metadata["skill"], "pick")
+        self.assertEqual(plan.steps[1].metadata["skill"], "pick")
 
     def test_local_manipulation_uses_vla_only(self) -> None:
         plan = self.planner.plan("抓起眼前的杯子")
@@ -71,7 +87,13 @@ class RuleTaskPlannerTest(unittest.TestCase):
 class HospitalVlnAdapterTest(unittest.TestCase):
     def test_steps_delegate_to_existing_hospital_commands(self) -> None:
         planner = RuleTaskPlanner()
-        adapter = HospitalVlnAdapter(workspace=Path("/workspace"))
+        profiles = InteractionProfileDatabase.load(
+            Path(__file__).resolve().parents[1] / "interaction_profiles.json"
+        )
+        adapter = HospitalVlnAdapter(
+            workspace=Path("/workspace"),
+            profiles=profiles,
+        )
         navigation = planner.plan("带我去候诊区").steps[0]
         docking = planner.plan("去桌边拿起红色方块").steps[0]
 
@@ -83,12 +105,48 @@ class HospitalVlnAdapterTest(unittest.TestCase):
             adapter.command_for(docking)[:2],
             ["/workspace/mobilemanibench.sh", "hospital-object-docking"],
         )
+        self.assertEqual(
+            adapter.command_for(docking)[-2:],
+            ["--standoff", "0.8"],
+        )
 
     def test_cli_relative_paths_are_root_relative(self) -> None:
         self.assertEqual(
             _project_path(Path("g1d_agent/vla_backend.example.json")),
             ROOT / "g1d_agent/vla_backend.example.json",
         )
+
+    def test_agent_standoff_overrides_free_form_command_distance(self) -> None:
+        self.assertEqual(select_standoff("停到方块前1.5米", 0.8), 0.8)
+        self.assertEqual(select_standoff("停到方块前0.7米", None), 0.7)
+
+    def test_missing_interaction_profile_blocks_before_subprocess(self) -> None:
+        profiles = InteractionProfileDatabase.load(
+            Path(__file__).resolve().parents[1] / "interaction_profiles.json"
+        )
+        adapter = HospitalVlnAdapter(
+            workspace=Path("/workspace"),
+            profiles=profiles,
+        )
+        step = RuleTaskPlanner().plan("去拿杯子").steps[0]
+
+        result = adapter.execute(step)
+
+        self.assertEqual(result.status, StepStatus.BLOCKED)
+        self.assertEqual(result.details["agent_phase"], "resolve_interaction_profile")
+
+    def test_static_observation_cannot_enable_real_vla(self) -> None:
+        adapter = PluginVlaAdapter(
+            backend=ReadyBackend(),
+            config_path=Path("/config.json"),
+            backend_name="test:create",
+        )
+
+        with self.assertRaisesRegex(ValueError, "只允许 contract 测试"):
+            _validate_static_observation_mode(
+                adapter,
+                Path("object_observation.json"),
+            )
 
 
 class G1DTaskAgentTest(unittest.TestCase):

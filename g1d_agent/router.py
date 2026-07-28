@@ -14,6 +14,8 @@ _MANIPULATION_TERMS = (
     "放",
     "递",
     "倒",
+    "打开",
+    "关闭",
     "开门",
     "关门",
     "按",
@@ -34,6 +36,8 @@ _MANIPULATION_TERMS = (
     "pull",
     "lift",
     "bring",
+    "pour",
+    "press",
 )
 
 _NAVIGATION_TERMS = (
@@ -68,9 +72,32 @@ _LOCAL_TERMS = (
     "this object",
 )
 
+_SKILL_TERMS = (
+    (
+        "pick",
+        ("抓", "拿", "取", "捡", "拾", "抬", "pick", "grasp", "grab", "lift"),
+    ),
+    ("place", ("放", "place", "put")),
+    ("hand_over", ("递", "hand over")),
+    ("pour", ("倒", "pour")),
+    ("open", ("打开", "开门", "open")),
+    ("close", ("关闭", "关门", "close")),
+    ("push", ("推", "push")),
+    ("pull", ("拉", "pull")),
+    ("press", ("按", "press")),
+    ("deliver", ("送", "给我", "bring")),
+)
+
 
 def _contains_any(text: str, terms: tuple[str, ...]) -> bool:
     return any(term in text for term in terms)
+
+
+def _infer_skill(text: str) -> str:
+    for skill, terms in _SKILL_TERMS:
+        if _contains_any(text, terms):
+            return skill
+    return "manipulation"
 
 
 class RuleTaskPlanner:
@@ -91,6 +118,7 @@ class RuleTaskPlanner:
         manipulation = _contains_any(normalized, _MANIPULATION_TERMS)
         navigation = _contains_any(normalized, _NAVIGATION_TERMS)
         explicitly_local = _contains_any(normalized, _LOCAL_TERMS)
+        skill = _infer_skill(normalized)
 
         if manipulation and explicitly_local and not navigation:
             return MissionPlan(
@@ -98,7 +126,7 @@ class RuleTaskPlanner:
                 route="vla",
                 reason="指令要求操作已在机器人可达范围内的物体。",
                 planner=self.name,
-                steps=(self._manipulation_step(command, "1"),),
+                steps=(self._manipulation_step(command, "1", skill),),
             )
 
         if manipulation:
@@ -119,9 +147,12 @@ class RuleTaskPlanner:
                         success_condition=(
                             "底盘到达经 occupancy/footprint 验证的预抓取停靠位并停止"
                         ),
-                        metadata={"vln_runner": "hospital-object-docking"},
+                        metadata={
+                            "vln_runner": "hospital-object-docking",
+                            "skill": skill,
+                        },
                     ),
-                    self._manipulation_step(command, "2"),
+                    self._manipulation_step(command, "2", skill),
                 ),
             )
 
@@ -150,7 +181,7 @@ class RuleTaskPlanner:
         )
 
     @staticmethod
-    def _manipulation_step(command: str, step_id: str) -> TaskStep:
+    def _manipulation_step(command: str, step_id: str, skill: str) -> TaskStep:
         return TaskStep(
             step_id=step_id,
             capability=Capability.VLA,
@@ -159,7 +190,10 @@ class RuleTaskPlanner:
             success_condition=(
                 "VLA backend 返回结构化成功，且 Isaac/真机安全层验证任务判据"
             ),
-            metadata={"vla_backend": "external_plugin"},
+            metadata={
+                "vla_backend": "external_plugin",
+                "skill": skill,
+            },
         )
 
 

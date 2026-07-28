@@ -18,13 +18,26 @@ from g1d_agent.adapters import (  # noqa: E402
     UnavailableVlaAdapter,
 )
 from g1d_agent.agent import G1DTaskAgent  # noqa: E402
+from g1d_agent.interaction import InteractionProfileDatabase  # noqa: E402
 from g1d_agent.models import MissionStatus  # noqa: E402
+from g1d_agent.readiness import VlaReadinessGate  # noqa: E402
 from g1d_agent.router import RuleTaskPlanner  # noqa: E402
+from g1d_agent.supervisor import (  # noqa: E402
+    BackendObservationProvider,
+    BackendRecoveryController,
+    JsonObservationProvider,
+    ReadinessVlaAdapter,
+    UnavailableObservationProvider,
+)
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--command", required=True, help="Chinese or English task instruction")
+    parser.add_argument(
+        "--command",
+        required=True,
+        help="Chinese or English task instruction",
+    )
     parser.add_argument(
         "--execute",
         action="store_true",
@@ -34,6 +47,20 @@ def parse_args() -> argparse.Namespace:
         "--vla-config",
         type=Path,
         help="VLA backend config; omitted means the explicit unavailable placeholder",
+    )
+    parser.add_argument(
+        "--interaction-profiles",
+        type=Path,
+        default=ROOT / "g1d_agent/interaction_profiles.json",
+        help="Object-and-skill staging/readiness profile database",
+    )
+    parser.add_argument(
+        "--readiness-observation",
+        type=Path,
+        help=(
+            "Contract-test object observation JSON; real execution must replace "
+            "this with a live Isaac/robot observation provider"
+        ),
     )
     parser.add_argument(
         "--output",
@@ -59,22 +86,23 @@ def _project_path(path: Path) -> Path:
     return (path if path.is_absolute() else ROOT / path).resolve()
 
 
+def _validate_static_observation_mode(
+    raw_vla,
+    observation_path: Path | None,
+) -> None:
+    if observation_path is not None and isinstance(raw_vla, PluginVlaAdapter):
+        raise ValueError(
+            "--readiness-observation 只允许 contract 测试，不能与已启用的 VLA backend 同用"
+        )
+
+
 def main() -> int:
     args = parse_args()
-    vla = (
-        PluginVlaAdapter.from_config(_project_path(args.vla_config))
-        if args.vla_config
-        else UnavailableVlaAdapter()
+    profiles = InteractionProfileDatabase.load(
+        _project_path(args.interaction_profiles)
     )
-    agent = G1DTaskAgent(
-        planner=RuleTaskPlanner(),
-        vln=HospitalVlnAdapter(
-            test=not args.no_test,
-            no_camera=not args.with_camera,
-        ),
-        vla=vla,
-    )
-    plan = agent.plan(args.command)
+    planner = RuleTaskPlanner()
+    plan = planner.plan(args.command)
     if not args.execute:
         payload = {
             "schema_version": 1,
@@ -86,6 +114,46 @@ def main() -> int:
         _write(_project_path(args.output), payload)
         print(json.dumps(payload, ensure_ascii=False, indent=2))
         return 0
+
+    raw_vla = (
+        PluginVlaAdapter.from_config(_project_path(args.vla_config))
+        if args.vla_config
+        else UnavailableVlaAdapter()
+    )
+    _validate_static_observation_mode(raw_vla, args.readiness_observation)
+    integration_backend = getattr(raw_vla, "backend", None)
+    if args.readiness_observation:
+        observations = JsonObservationProvider.load(
+            _project_path(args.readiness_observation)
+        )
+    elif integration_backend is not None and callable(
+        getattr(integration_backend, "observe_readiness", None)
+    ):
+        observations = BackendObservationProvider(integration_backend)
+    else:
+        observations = UnavailableObservationProvider()
+    recovery = (
+        BackendRecoveryController(integration_backend)
+        if integration_backend is not None
+        and callable(getattr(integration_backend, "recover_readiness", None))
+        else None
+    )
+    vla = ReadinessVlaAdapter(
+        delegate=raw_vla,
+        profiles=profiles,
+        observations=observations,
+        gate=VlaReadinessGate(),
+        recovery=recovery,
+    )
+    agent = G1DTaskAgent(
+        planner=planner,
+        vln=HospitalVlnAdapter(
+            test=not args.no_test,
+            no_camera=not args.with_camera,
+            profiles=profiles,
+        ),
+        vla=vla,
+    )
 
     result = agent.execute(plan)
     payload = result.to_dict()

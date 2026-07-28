@@ -5,6 +5,44 @@
 
 ## 2026-07-28
 
+### VLA 现场启动门与物体—技能站位配置
+
+- Agent 从一次性 `VLN/VLA` 路由升级为两层监督：高层仍决定能力序列，操作前新增
+  `VlaReadinessGate`，只有实时现场条件全部满足才把控制权交给 VLA。
+- 新增严格的“物体 + 技能”交互配置库。当前 `red_cube_demo + pick` 使用
+  provisional 0.80 m 推荐距离、0.65–0.90 m 允许区间，并定义横向/朝向、检测稳定性、
+  必需相机、观测时效、底盘停止阈值和抬升保持成功判据。
+- 现有 `hospital-object-docking` 增加显式 `--standoff` 覆盖；Agent 从审核 profile
+  注入推荐值，用户自由文本距离不能绕过交互区间。缺少唯一 profile 时在启动子进程前
+  `blocked`。
+- 新增版本化 `ObjectObservation` 和门控检查：环境、object ID、`base_link` frame、
+  可见性/置信度/相机、稳定帧/时效/不确定度、碰撞、底盘速度、距离、横向/朝向与右臂
+  IK。
+- 每类失败生成具体恢复动作；`ReadinessRecoveryController` 最多执行三次有界
+  重识别/等待/停车/靠近/后退/对齐/换站位，每次重新观测。碰撞和配置不匹配直接阻断。
+- VLA integration backend 可选实现 `observe_readiness` 和 `recover_readiness`；
+  CLI 自动装配到同一会话监督器。静态 observation JSON 只用于验证 contract，并被禁止
+  与已启用的 VLA backend 同用。
+- 更新 `vlaandvln.md` 和 `AGENTS.md`，写清实时 provider、距离标定、同一
+  SimulationApp 接管以及当前未验收边界。
+
+验证：
+
+- G1-D Agent 测试 26/26 通过；覆盖交互 profile/技能解析、standoff 强制覆盖、缺配置
+  预阻断、全部门控分支、有限恢复重检查、碰撞不可恢复和 backend 可选 hook。
+- Hospital 轻量测试 18/18、LingBot 语义导航测试 21/21 通过。
+- Python 编译、三个 JSON schema 实例解析和 Shell 语法通过；plan-only 不加载缺失的
+  VLA config。
+- CLI 实测未知杯子 profile 和“门控通过但 VLA 未交付”均返回 `blocked` / 退出码 3，
+  未启动 Isaac 或伪造操作成功。
+
+已知限制：
+
+- 本次未运行新的大型 Isaac 仿真；没有实时 SAM3/RGB-D/TF、右腕相机、IK、碰撞或局部
+  底盘恢复 controller。
+- 红色方块距离区间为 provisional 接口初值，必须通过右臂无接触预抓取和 VLA 实测后
+  才能升级为 `sim_validated`，不能用于物理真机。
+
 ### G1-D VLN/VLA 任务 Agent 与 VLA 接口占位
 
 - 新增任务级 `G1DTaskAgent` 和可审计 planner，把自然语言分解为纯 VLN、纯 VLA 或

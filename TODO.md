@@ -62,6 +62,14 @@ VLN → VLA，并复用既有 Hospital 导航；VLA 仍等待外部团队交付�
   handoff context 插槽，未接入时明确 `blocked`。
 - [x] 新增 `vlaandvln.md`，记录现有 LingBot/SAM3/语义数据库/DeepSeek 导航链、Agent
   状态机、VLA 交付接口、Isaac 同会话接管要求与真机 sim-to-real 安全步骤。
+- [x] Agent 增加严格的“物体 + 技能”交互配置库；预抓取距离由配置显式交给既有
+  `hospital-object-docking`，当前红色方块 `pick` 使用 provisional 0.80 m 推荐值和
+  0.65–0.90 m 允许区间。
+- [x] Agent 增加 `VlaReadinessGate` 和有限恢复协议：VLA 前检查实时检测、相机、观测
+  时效、底盘停止、距离/横向/朝向、右臂 IK 和碰撞；失败时输出明确恢复动作，碰撞和
+  配置错误不自动重试。
+- [x] VLA 插件支持可选 `observe_readiness` / `recover_readiness` 同会话 hook；提供
+  版本化静态观测 contract 示例，只用于接口测试，不冒充真实感知。
 
 ## 当前问题
 
@@ -85,6 +93,9 @@ VLN → VLA，并复用既有 Hospital 导航；VLA 仍等待外部团队交付�
 - [ ] **P1：VLA backend 尚未交付。** 当前 Agent 的 VLA 插槽会 fail-closed 为
   `blocked`；需要 VLA 团队提供权重、预处理、相机协议、G1-D 动作映射、依赖环境和成功
   判据，并在 Hospital runner 到达后保持同一 Isaac SimulationApp 完成连续操作。
+- [ ] **P1：VLA 启动门尚无实时 provider。** `interaction_profiles.json` 当前仅有
+  provisional 红色方块拿取配置；仍需在同一 Isaac 会话接入头部/右腕相机、SAM3 +
+  metric depth/TF、底盘速度、右臂 IK 与碰撞结果，并用实测标定距离区间。
 - [ ] **P1：物体精确停靠仍依赖已知物体位姿和 assisted 控制。** demo 方块现已是带
   碰撞和质量的动态刚体，但还没有抓取/抬升控制与成功判据；后续仍需 RGB 物体检测/跟踪
   和末端视觉伺服。当前结果不能表述为纯轮地接触或 OpenVLA 抓取验收。
@@ -151,7 +162,8 @@ VLN → VLA，并复用既有 Hospital 导航；VLA 仍等待外部团队交付�
 
 - 审核主走廊 occupancy、连通性和 docking pose 后再增加地点。
 - **唯一近期下一步：**基于现有碰撞桌和动态方块，完成 G1-D 右臂关节映射与一个不接触
-  物体的预抓取位姿，使右手稳定到达方块侧面且不碰撞桌面。
+  物体的预抓取位姿，使右手稳定到达方块侧面且不碰撞桌面；把该 IK/碰撞结果接入
+  `ObjectObservationProvider`，据实标定并更新 provisional 距离区间。
 - 再完成右手闭合、接触判定和抬升至少 5 cm，然后替换为 YCB 物体。
 - 最终组合 `NAVIGATE -> ALIGN -> GRASP -> LIFT -> SUCCESS/FAIL` 单回合流程。
 - VLA 交付后按 `vlaandvln.md` 接入 `g1d_agent.vla_backend_v1`，先单独验收观察/动作

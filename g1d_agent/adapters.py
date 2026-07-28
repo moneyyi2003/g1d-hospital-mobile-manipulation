@@ -9,6 +9,7 @@ from pathlib import Path
 import subprocess
 from typing import Any, Mapping, Protocol
 
+from .interaction import InteractionProfile, InteractionProfileDatabase
 from .models import StepKind, StepResult, StepStatus, TaskStep
 
 
@@ -32,6 +33,15 @@ class HospitalVlnAdapter:
     test: bool = True
     no_camera: bool = True
     workspace: Path = ROOT
+    profiles: InteractionProfileDatabase | None = None
+
+    def _profile_for(self, step: TaskStep) -> InteractionProfile | None:
+        if self.profiles is None or step.kind is not StepKind.PREGRASP_DOCKING:
+            return None
+        return self.profiles.resolve(
+            step.instruction,
+            str(step.metadata.get("skill", "")),
+        )
 
     def command_for(self, step: TaskStep) -> list[str]:
         if step.kind is StepKind.SEMANTIC_NAVIGATION:
@@ -56,6 +66,9 @@ class HospitalVlnAdapter:
             command.append("--test")
         if self.no_camera:
             command.append("--no-camera")
+        profile = self._profile_for(step)
+        if profile is not None:
+            command.extend(["--standoff", str(profile.preferred_distance_m)])
         return command
 
     def execute(
@@ -63,7 +76,23 @@ class HospitalVlnAdapter:
         step: TaskStep,
         context: Mapping[str, Any] | None = None,
     ) -> StepResult:
-        argv = self.command_for(step)
+        try:
+            profile = self._profile_for(step)
+            argv = self.command_for(step)
+        except ValueError as exc:
+            return StepResult(
+                step.step_id,
+                StepStatus.BLOCKED,
+                f"预抓取导航缺少唯一交互配置：{exc}",
+                {
+                    "agent_phase": "resolve_interaction_profile",
+                    "profiles": (
+                        str(self.profiles.source)
+                        if self.profiles is not None
+                        else None
+                    ),
+                },
+            )
         completed = subprocess.run(
             argv,
             cwd=self.workspace,
@@ -95,6 +124,9 @@ class HospitalVlnAdapter:
                     "argv": argv,
                     "returncode": completed.returncode,
                     "handoff_artifacts": artifacts,
+                    "interaction_profile": (
+                        profile.to_dict() if profile is not None else None
+                    ),
                 },
             )
         return StepResult(

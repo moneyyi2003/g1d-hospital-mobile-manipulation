@@ -21,9 +21,25 @@ from hospital_vln.object_docking import (  # noqa: E402
 )
 
 
+def select_standoff(command: str, explicit_standoff: float | None) -> float:
+    return (
+        float(explicit_standoff)
+        if explicit_standoff is not None
+        else parse_standoff(command)
+    )
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--command", default="请停到红色方块前0.8米")
+    parser.add_argument(
+        "--standoff",
+        type=float,
+        help=(
+            "Explicit base-center/object distance; "
+            "overrides distance parsed from command"
+        ),
+    )
     parser.add_argument(
         "--objects",
         type=Path,
@@ -57,7 +73,7 @@ def main() -> int:
     args = parse_args()
     targets = load_object_targets(args.objects.resolve())
     target = resolve_object(args.command, targets)
-    standoff_m = parse_standoff(args.command)
+    standoff_m = select_standoff(args.command, args.standoff)
     plan = build_object_docking_plan(args.map.resolve(), target, standoff_m)
 
     args.output.mkdir(parents=True, exist_ok=True)
