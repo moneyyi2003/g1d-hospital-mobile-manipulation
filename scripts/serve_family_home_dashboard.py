@@ -23,6 +23,7 @@ DEFAULT_OUTPUT = ROOT / "outputs/family_home_web"
 sys.path.insert(0, str(ROOT))
 
 from family_home_vln.layout import ROBOT_RADIUS_M, SCENE_NAME, START_POSE  # noqa: E402
+from family_home_vln.household_objects import OBJECT_SET_SIGNATURE  # noqa: E402
 from simple_room_vln.artifacts import load_lingbot_artifacts  # noqa: E402
 from simple_room_vln.core import path_length, resolve_place  # noqa: E402
 
@@ -61,6 +62,10 @@ class FamilyHomeDashboardSession:
             )
         self.summary = _read_json(self.summary_path)
         self.place_catalog = _read_json(self.places_json)
+        self.formal_bundle_current = (
+            self.place_catalog.get("map", {}).get("household_object_set_signature")
+            == OBJECT_SET_SIGNATURE
+        )
         self.grid, self.places = load_lingbot_artifacts(
             self.map_yaml, self.places_json, robot_radius_m=ROBOT_RADIUS_M
         )
@@ -104,6 +109,11 @@ class FamilyHomeDashboardSession:
         survey = self._optional_json(
             self._input_path("survey_manifest", self.artifacts / "survey/capture_manifest.json")
         )
+        discovery = self._optional_json(
+            self._input_path(
+                "discovery", self.artifacts / "discovery/object_discovery.json"
+            )
+        )
         sam3 = self._optional_json(
             self._input_path("sam3", self.artifacts / "sam3/sam3_manifest.json")
         )
@@ -121,7 +131,7 @@ class FamilyHomeDashboardSession:
             for item in sam3.get("prompts", [])
         }
         evidence_by_prompt: dict[str, list[dict]] = {}
-        for item in observations.get("observations", []):
+        for item in observations.get("observations", []) if self.formal_bundle_current else []:
             prompt = str(item.get("prompt", "")).casefold()
             if (
                 float(item.get("score", 0.0)) >= 0.35
@@ -129,52 +139,81 @@ class FamilyHomeDashboardSession:
             ):
                 evidence_by_prompt.setdefault(prompt, []).append(item)
 
-        objects = []
-        scenes = []
+        navigation_by_prompt: dict[str, dict] = {}
         for place in self.place_catalog.get("places", []):
-            place_id = str(place.get("id", ""))
-            prompt = str(place.get("target", {}).get("source_id", "")).strip()
+            prompts = {
+                str(place.get("target", {}).get("source_id", "")).casefold(),
+                *(
+                    str(item).casefold()
+                    for item in place.get("metadata", {}).get("discovered_labels", [])
+                ),
+            }
+            for prompt in prompts - {""}:
+                navigation_by_prompt[prompt] = place
+
+        objects = []
+        for candidate in discovery.get("objects", []):
+            prompt = str(candidate.get("label", "")).strip()
             prompt_key = prompt.casefold()
             raw = raw_by_prompt.get(prompt_key, {})
             evidence = evidence_by_prompt.get(prompt_key, [])
-            metadata = place.get("metadata", {})
-            anchor = metadata.get("semantic_anchor_xy")
-            if anchor is None:
-                anchor = semantic_metadata.get("anchors", {}).get(prompt)
-            approved = place.get("status") == "approved"
-            recognized = bool(evidence)
-            object_name, scene_name = OBJECT_LABELS.get(
-                place_id, (place.get("name", prompt), "未分类区域")
+            anchor = semantic_metadata.get("anchors", {}).get(prompt)
+            place = navigation_by_prompt.get(prompt_key)
+            approved = bool(
+                self.formal_bundle_current
+                and place
+                and place.get("status") == "approved"
             )
             scores = [float(item.get("score", 0.0)) for item in evidence]
             objects.append(
                 {
-                    "id": place_id,
-                    "name": object_name,
+                    "id": prompt_key.replace(" ", "_"),
+                    "name": prompt,
                     "prompt": prompt,
-                    "recognized": recognized,
+                    "label_source": "Florence-2 RGB 自主生成",
+                    "recognized": True,
+                    "mapped": bool(evidence),
                     "navigable": approved,
                     "status": (
                         "approved"
                         if approved
-                        else "recognized_not_approved"
-                        if recognized
-                        else "not_detected"
+                        else "mapped_not_navigable"
+                        if evidence
+                        else "discovered_not_mapped"
                     ),
-                    "raw_detections": int(raw.get("detections", 0)),
+                    "discovery_frame_occurrences": int(
+                        candidate.get("frame_occurrences", 0)
+                    ),
+                    "raw_detections": int(candidate.get("raw_detection_count", 0)),
+                    "sam3_detections": int(raw.get("detections", 0)),
                     "map_observations": len(evidence),
                     "track_count": len(
                         {str(item.get("track_id", "")) for item in evidence}
                     ),
                     "mean_score": sum(scores) / len(scores) if scores else None,
                     "anchor_xy": anchor,
-                    "region_id": metadata.get("region_id"),
+                    "region_id": (
+                        place.get("metadata", {}).get("region_id") if place else None
+                    ),
                     "review_reason": (
                         ""
-                        if recognized
-                        else "没有获得可用的 SAM3 map-frame 证据，保持不可导航"
+                        if approved
+                        else "已形成地图语义，但没有对应的审核导航地点"
+                        if evidence
+                        else "已由 RGB 自主发现，但尚未形成合格的 SAM3 map-frame 证据"
                     ),
                 }
+            )
+
+        scenes = []
+        for place in self.place_catalog.get("places", []):
+            place_id = str(place.get("id", ""))
+            prompt = str(place.get("target", {}).get("source_id", "")).strip()
+            prompt_key = prompt.casefold()
+            evidence = evidence_by_prompt.get(prompt_key, [])
+            recognized = bool(evidence)
+            object_name, scene_name = OBJECT_LABELS.get(
+                place_id, (place.get("name", prompt), "未分类区域")
             )
             scenes.append(
                 {
@@ -190,19 +229,23 @@ class FamilyHomeDashboardSession:
             )
 
         frame_count = len(survey.get("frames", []))
-        recognized_count = sum(item["recognized"] for item in objects)
+        mapped_count = sum(item["mapped"] for item in objects)
         approved_count = sum(item["navigable"] for item in objects)
         return {
-            "source": "G1-D RGB 巡检 → LingBot RGB-only → SAM3.1 → map-frame 审核",
+            "source": (
+                "G1-D RGB 巡检 → Florence-2 无类别清单自主发现 → "
+                "LingBot RGB-only → SAM3.1 → map-frame 审核"
+            ),
+            "formal_bundle_current": self.formal_bundle_current,
+            "truth_boundary": discovery.get("truth_boundary", {}),
             "survey": {
                 "frame_count": frame_count,
                 "resolution": survey.get("camera", {}).get("resolution"),
                 "rgb_only_model_input": survey.get("rgb_is_only_model_input"),
             },
             "summary": {
-                "object_categories": len(objects),
-                "recognized": recognized_count,
-                "not_detected": len(objects) - recognized_count,
+                "discovered_categories": len(objects),
+                "mapped_categories": mapped_count,
                 "approved_destinations": approved_count,
                 "semantic_regions": len(
                     semantic_metadata.get("region_labels", {})
@@ -240,16 +283,24 @@ class FamilyHomeDashboardSession:
                     "min_y": float(bounds["min_z"]),
                     "max_y": float(bounds["max_z"]),
                 },
-                "source_status": "formal",
-                "source_label": "G1-D 扫描 · LingBot / SAM3 正式制品",
-                "formal_bundle_detected": True,
+                "source_status": (
+                    "formal" if self.formal_bundle_current else "stale"
+                ),
+                "source_label": (
+                    "G1-D 扫描 · LingBot / SAM3 正式制品"
+                    if self.formal_bundle_current
+                    else "已完成自主发现 · 正式四层等待重建"
+                ),
+                "formal_bundle_detected": self.formal_bundle_current,
                 "robot_radius_m": ROBOT_RADIUS_M,
             },
             "layers": [
                 {
                     "id": public_id,
                     "label": label,
-                    "status": "formal",
+                    "status": (
+                        "formal" if self.formal_bundle_current else "stale"
+                    ),
                     "asset": (
                         f"/asset/map/{asset_id}.png"
                         f"?v={self.map_assets[asset_id].stat().st_mtime_ns}"
@@ -267,6 +318,7 @@ class FamilyHomeDashboardSession:
                     "example": f"请带我到{place.name}",
                 }
                 for place in self.places
+                if self.formal_bundle_current
             ],
             "recognition": self.recognition,
             "camera_stream": "/stream/camera.mjpg",
@@ -322,6 +374,10 @@ class FamilyHomeDashboardSession:
         return state
 
     def plan(self, command: str):
+        if not self.formal_bundle_current:
+            raise ValueError(
+                "家庭物品版本已变化；请先运行 home-map 重建并审核正式四层，当前禁止导航"
+            )
         target = resolve_place(command, self.places)
         path = self.grid.plan(
             (START_POSE.x, START_POSE.y),
@@ -570,7 +626,12 @@ def main() -> int:
     server.session = session
     print(f"Family-home dashboard: http://{args.host}:{args.port}")
     print(f"Map source: {session.config()['map']['source_label']}")
-    print("Approved destinations: " + " / ".join(place.name for place in session.places))
+    destinations = (
+        " / ".join(place.name for place in session.places)
+        if session.formal_bundle_current
+        else "none (formal bundle is stale)"
+    )
+    print("Approved destinations: " + destinations)
     try:
         server.serve_forever()
     except KeyboardInterrupt:

@@ -220,9 +220,9 @@ function renderRecognition() {
     : "未知分辨率";
   $("recognitionSummary").innerHTML = [
     ["RGB 巡检帧", survey.frame_count, resolution],
-    ["目标类别", summary.object_categories, "SAM3 提示类别"],
-    ["识别成功", summary.recognized, `${summary.semantic_regions} 个语义区域`],
-    ["可导航地点", summary.approved_destinations, `${summary.not_detected} 类未检出`],
+    ["自主发现类别", summary.discovered_categories, "模型自行生成名称"],
+    ["完成地图对齐", summary.mapped_categories, `${summary.semantic_regions} 个语义区域`],
+    ["可导航地点", summary.approved_destinations, "仅开放审核通过的停靠点"],
   ].map(([label, value, detail]) => `
     <div class="summary-card">
       <span>${escapeHtml(label)}</span>
@@ -233,16 +233,16 @@ function renderRecognition() {
 
   $("objectResults").innerHTML = recognition.objects.map((item) => {
     const statusLabel = item.status === "approved"
-      ? "已识别 · 可导航"
-      : item.status === "recognized_not_approved"
-        ? "已识别 · 未开放"
-        : "未识别";
+      ? "自主发现 · 可导航"
+      : item.status === "mapped_not_navigable"
+        ? "自主发现 · 已入图"
+        : "自主发现 · 待入图";
     const anchor = Array.isArray(item.anchor_xy)
       ? `x ${item.anchor_xy[0].toFixed(2)} · y ${item.anchor_xy[1].toFixed(2)}`
       : "无语义坐标";
-    const evidence = item.recognized
-      ? `原始检测 ${item.raw_detections} · 地图证据 ${item.map_observations} · ${anchor}`
-      : `原始检测 ${item.raw_detections} · 地图证据 0`;
+    const evidence = `跨帧出现 ${item.discovery_frame_occurrences} · ` +
+      `自主检测 ${item.raw_detections} · SAM3 ${item.sam3_detections} · ` +
+      `地图证据 ${item.map_observations} · ${anchor}`;
     return `
       <div class="result-row ${escapeHtml(item.status)}">
         <i aria-hidden="true"></i>
@@ -251,6 +251,7 @@ function renderRecognition() {
             <b>${escapeHtml(item.name)}</b>
             <code>${escapeHtml(item.prompt)}</code>
           </div>
+          <small>${escapeHtml(item.label_source)}</small>
           <p>${escapeHtml(evidence)}</p>
           ${item.review_reason ? `<small>${escapeHtml(item.review_reason)}</small>` : ""}
         </div>

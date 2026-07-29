@@ -16,10 +16,16 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from family_home_vln.formal_mapping import (  # noqa: E402
-    PROMPT_BY_PLACE,
     build_formal_place_catalog,
     build_scan_semantic_layers,
 )
+from family_home_vln.discovery import (  # noqa: E402
+    DISCOVERY_PIPELINE_VERSION,
+    run_object_discovery,
+    survey_signature,
+    validate_survey,
+)
+from family_home_vln.household_objects import OBJECT_SET_SIGNATURE  # noqa: E402
 from lingbot_nav.errors import ConfigurationError  # noqa: E402
 from lingbot_nav.mapping.alignment import (  # noqa: E402
     align_lingbot_to_survey,
@@ -38,15 +44,6 @@ from lingbot_nav.perception.sam3_backend import (  # noqa: E402
 from lingbot_nav.sim.map_views import render_mapping_views  # noqa: E402
 
 
-DEFAULT_PROMPTS = tuple(PROMPT_BY_PLACE.values())
-REVIEWED_PROMPT_FRAMES = {
-    "sofa": 40,
-    "bed": 20,
-    "dining table": 130,
-    "kitchen counter": 150,
-}
-
-
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output-dir", type=Path, default=ROOT / "outputs/family_home_vln")
@@ -58,7 +55,18 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--stage",
-        choices=("all", "infer", "align", "map", "sam3", "project", "layers", "places", "render"),
+        choices=(
+            "all",
+            "discover",
+            "infer",
+            "align",
+            "map",
+            "sam3",
+            "project",
+            "layers",
+            "places",
+            "render",
+        ),
         default="all",
     )
     parser.add_argument("--mode", choices=("streaming", "windowed"), default="streaming")
@@ -69,15 +77,28 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--sam3-prompt", action="append", default=[])
     parser.add_argument(
+        "--allow-manual-prompts",
+        action="store_true",
+        help="explicit diagnostic override; normal formal mapping uses autonomous discovery",
+    )
+    parser.add_argument(
         "--sam3-prompt-frame",
         action="append",
         default=[],
         metavar="PROMPT=INDEX",
         help=(
-            "operator-reviewed RGB frame for one prompt; defaults are the visually "
-            "reviewed frames for the deterministic 215-frame family survey"
+            "operator override for one discovered label; autonomous discovery supplies "
+            "the default label and frame"
         ),
     )
+    parser.add_argument(
+        "--discovery-model",
+        type=Path,
+        default=ROOT / "checkpoints/florence-2-base-ft",
+    )
+    parser.add_argument("--discovery-maximum-frames", type=int, default=80)
+    parser.add_argument("--discovery-min-frame-occurrences", type=int, default=2)
+    parser.add_argument("--discovery-max-objects", type=int, default=16)
     parser.add_argument("--sam3-threshold", type=float, default=0.50)
     parser.add_argument(
         "--sam3-projection-window",
@@ -86,6 +107,7 @@ def parse_args() -> argparse.Namespace:
         help="project prompt frame plus this many forward frames to reject late tracker drift",
     )
     parser.add_argument("--force-inference", action="store_true")
+    parser.add_argument("--force-discovery", action="store_true")
     parser.add_argument("--force-sam3", action="store_true")
     return parser.parse_args()
 
@@ -159,6 +181,8 @@ def _run_prompt_sessions(
     threshold: float,
     *,
     force: bool,
+    prompt_source: str,
+    survey_signature_value: str,
 ) -> dict:
     frame_count = len(tuple(preprocessed_rgb.glob("*.png")))
     if frame_count == 0:
@@ -217,12 +241,14 @@ def _run_prompt_sessions(
         )
     manifest = {
         "schema_version": 1,
-        "pipeline": "official_sam3.1_per_concept_reviewed_prompt_frames",
+        "pipeline": "official_sam3.1_per_autonomously_discovered_label",
         "video_resource": str(preprocessed_rgb),
-        "prompt_frame_selection": (
-            "operator override or visually reviewed deterministic-survey frame; "
-            "survey poses and configured object coordinates were not used for selection"
-        ),
+        "survey_signature": survey_signature_value,
+        "prompt_source": prompt_source,
+        "prompt_frame_selection": "Florence-2 RGB detection frame or explicit diagnostic override",
+        "category_list_supplied_to_discovery": False,
+        "usd_semantics_read": False,
+        "scene_object_coordinates_read": False,
         "prompts": records,
     }
     output.mkdir(parents=True, exist_ok=True)
@@ -246,16 +272,65 @@ def main() -> int:
     semantic_output = output / "semantic"
     combined_observations = semantic_output / "sam3_observations.json"
     preview_output = output / "map_preview"
+    discovery_path = output / "discovery/object_discovery.json"
+
+    survey, _rgb_files = validate_survey(survey_manifest, survey_rgb)
+    if survey.get("household_object_set_signature") != OBJECT_SET_SIGNATURE:
+        raise ValueError(
+            "RGB 巡检不是当前家庭物品版本；请重新运行 home-survey 后再建图。"
+        )
+    current_survey_signature = survey_signature(survey_manifest, survey_rgb)
+
+    if args.stage in {"all", "discover"}:
+        cached_discovery = _read_json(discovery_path) if discovery_path.is_file() else {}
+        cached_input = cached_discovery.get("input", {})
+        cached_gates = cached_discovery.get("quality_gates", {})
+        cached_model = cached_discovery.get("model", {})
+        discovery_cache_matches = (
+            cached_discovery.get("pipeline_version") == DISCOVERY_PIPELINE_VERSION
+            and cached_input.get("survey_signature") == current_survey_signature
+            and cached_model.get("path") == str(args.discovery_model.resolve())
+            and cached_gates.get("min_frame_occurrences")
+            == args.discovery_min_frame_occurrences
+            and cached_gates.get("max_objects") == args.discovery_max_objects
+            and len(cached_input.get("sampled_frame_indices", []))
+            == min(len(_rgb_files), args.discovery_maximum_frames)
+        )
+        if args.force_discovery or not discovery_cache_matches:
+            discovery = run_object_discovery(
+                survey_manifest,
+                survey_rgb,
+                discovery_path,
+                model_path=args.discovery_model,
+                maximum_frames=args.discovery_maximum_frames,
+                min_frame_occurrences=args.discovery_min_frame_occurrences,
+                max_objects=args.discovery_max_objects,
+            )
+        else:
+            discovery = cached_discovery
+            print(f"[Family map] reusing autonomous discovery: {discovery_path}")
+        if not discovery.get("objects"):
+            raise ValueError("自主 RGB 发现没有形成跨帧物体候选，停止 SAM3/正式地图构建")
+        if args.stage == "discover":
+            return 0
 
     if args.stage in {"all", "infer"}:
         manifest_path = lingbot_output / "lingbot_manifest.json"
-        if args.force_inference or not manifest_path.is_file():
+        signature_path = lingbot_output / "survey_signature.txt"
+        cache_matches = (
+            manifest_path.is_file()
+            and signature_path.is_file()
+            and signature_path.read_text(encoding="utf-8").strip()
+            == current_survey_signature
+        )
+        if args.force_inference or not cache_matches:
             result = run_lingbot_map(
                 survey_rgb,
                 args.checkpoint,
                 lingbot_output,
                 LingBotInferenceConfig(mode=args.mode),
             )
+            signature_path.write_text(current_survey_signature + "\n", encoding="utf-8")
             print(f"[Family map] LingBot frames: {result['outputs']['frame_count']}")
         else:
             print(f"[Family map] reusing LingBot inference: {manifest_path}")
@@ -309,18 +384,33 @@ def main() -> int:
             return 0
 
     if args.stage in {"all", "sam3"}:
-        prompts = tuple(args.sam3_prompt) or DEFAULT_PROMPTS
+        discovery = _read_json(discovery_path)
+        if args.sam3_prompt and not args.allow_manual_prompts:
+            raise ValueError(
+                "--sam3-prompt 是人工类别注入；诊断时必须同时显式传 "
+                "--allow-manual-prompts，正式流程不要使用。"
+            )
+        discovered = {
+            str(item["label"]).casefold(): item for item in discovery.get("objects", [])
+        }
+        prompts = (
+            tuple(args.sam3_prompt)
+            if args.sam3_prompt
+            else tuple(str(item["sam3_prompt"]) for item in discovery.get("objects", []))
+        )
+        if not prompts:
+            raise ValueError("object_discovery.json 没有可交给 SAM3 的自主发现标签")
         overrides = _explicit_prompt_frames(args.sam3_prompt_frame)
         prompt_frames = {}
         for prompt in prompts:
             key = prompt.casefold()
             if key in overrides:
                 prompt_frames[key] = overrides[key]
-            elif prompt in REVIEWED_PROMPT_FRAMES:
-                prompt_frames[key] = REVIEWED_PROMPT_FRAMES[prompt]
+            elif key in discovered:
+                prompt_frames[key] = int(discovered[key]["prompt_frame"])
             else:
                 raise ValueError(
-                    f"no reviewed prompt frame for {prompt!r}; pass "
+                    f"manual prompt {prompt!r} has no frame; pass "
                     f"--sam3-prompt-frame '{prompt}=INDEX'"
                 )
         _run_prompt_sessions(
@@ -330,7 +420,18 @@ def main() -> int:
             sam3_output,
             args.sam3_checkpoint,
             args.sam3_threshold,
-            force=args.force_sam3,
+            force=(
+                args.force_sam3
+                or not (sam3_output / "sam3_manifest.json").is_file()
+                or _read_json(sam3_output / "sam3_manifest.json").get("survey_signature")
+                != current_survey_signature
+            ),
+            prompt_source=(
+                "explicit_manual_diagnostic_override"
+                if args.sam3_prompt
+                else "florence2_category_free_rgb_discovery"
+            ),
+            survey_signature_value=current_survey_signature,
         )
         if args.stage == "sam3":
             return 0
@@ -382,6 +483,7 @@ def main() -> int:
             alignment_path,
             semantic_output / "region_map.npy",
             output / "places_formal.json",
+            household_object_set_signature=OBJECT_SET_SIGNATURE,
         )
         approved = sum(item.get("status") == "approved" for item in places["places"])
         print(f"[Family map] places approved={approved} rejected={len(places['places']) - approved}")
@@ -410,11 +512,12 @@ def main() -> int:
         summary = {
             "schema_version": 1,
             "scene": "G1-D scanned multi-zone family home",
-            "source": "g1d_rgb_survey+lingbot_rgb_only+sam3.1",
+            "source": "g1d_rgb_survey+florence2_category_free+lingbot_rgb_only+sam3.1",
             "map": metadata,
             "assets": {name: str(path) for name, path in assets.items()},
             "inputs": {
                 "survey_manifest": str(survey_manifest),
+                "discovery": str(discovery_path),
                 "predictions": str(predictions),
                 "alignment": str(alignment_path),
                 "sam3": str(sam3_output / "sam3_manifest.json"),

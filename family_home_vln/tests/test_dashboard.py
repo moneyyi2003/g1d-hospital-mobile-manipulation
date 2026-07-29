@@ -6,6 +6,7 @@ import unittest
 from pathlib import Path
 
 from family_home_vln.formal_mapping import PROMPT_BY_PLACE
+from family_home_vln.household_objects import OBJECT_SET_SIGNATURE
 from family_home_vln.layout import PLACES
 from scripts.serve_family_home_dashboard import FamilyHomeDashboardSession
 
@@ -53,7 +54,10 @@ class FamilyHomeDashboardSessionTest(unittest.TestCase):
         (artifacts / "places_formal.json").write_text(
             json.dumps({
                 "schema_version": 2,
-                "map": {"sha256": digest.hexdigest()},
+                "map": {
+                    "sha256": digest.hexdigest(),
+                    "household_object_set_signature": OBJECT_SET_SIGNATURE,
+                },
                 "places": places,
             }, ensure_ascii=False),
             encoding="utf-8",
@@ -80,6 +84,30 @@ class FamilyHomeDashboardSessionTest(unittest.TestCase):
                         "detections": 3 if prompt == "sofa" else 0,
                     }
                     for prompt in PROMPT_BY_PLACE.values()
+                ],
+            }),
+            encoding="utf-8",
+        )
+        discovery = artifacts / "discovery/object_discovery.json"
+        discovery.parent.mkdir(parents=True)
+        discovery.write_text(
+            json.dumps({
+                "schema_version": 1,
+                "truth_boundary": {
+                    "category_prompt_list_supplied": False,
+                    "labels_generated_by_model": True,
+                },
+                "objects": [
+                    {
+                        "label": "sofa",
+                        "frame_occurrences": 2,
+                        "raw_detection_count": 3,
+                    },
+                    {
+                        "label": "book",
+                        "frame_occurrences": 2,
+                        "raw_detection_count": 2,
+                    },
                 ],
             }),
             encoding="utf-8",
@@ -136,6 +164,7 @@ class FamilyHomeDashboardSessionTest(unittest.TestCase):
                 },
                 "inputs": {
                     "survey_manifest": str(survey_manifest),
+                    "discovery": str(discovery),
                     "sam3": str(sam3_manifest),
                     "semantic_observations": str(observations),
                 },
@@ -174,10 +203,13 @@ class FamilyHomeDashboardSessionTest(unittest.TestCase):
             self.assertIn("lingbot_rgb_only", data["source"])
             recognition = config["recognition"]
             self.assertEqual(recognition["survey"]["frame_count"], 2)
-            self.assertEqual(recognition["summary"]["recognized"], 1)
-            self.assertEqual(recognition["summary"]["not_detected"], 3)
+            self.assertEqual(recognition["summary"]["discovered_categories"], 2)
+            self.assertEqual(recognition["summary"]["mapped_categories"], 1)
             self.assertEqual(recognition["objects"][0]["raw_detections"], 3)
             self.assertEqual(recognition["objects"][0]["map_observations"], 1)
+            self.assertFalse(
+                recognition["truth_boundary"]["category_prompt_list_supplied"]
+            )
 
     def test_incomplete_four_layer_bundle_fails_closed(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -207,6 +239,23 @@ class FamilyHomeDashboardSessionTest(unittest.TestCase):
             self.assertGreaterEqual(len(path), 2)
             with self.assertRaises(ValueError):
                 session.plan("请带我去阳台")
+
+    def test_changed_household_object_set_keeps_report_but_blocks_navigation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.write_formal_bundle(root)
+            catalog = root / "artifacts/places_formal.json"
+            payload = json.loads(catalog.read_text(encoding="utf-8"))
+            payload["map"]["household_object_set_signature"] = "old-object-set"
+            catalog.write_text(json.dumps(payload), encoding="utf-8")
+
+            session = self.make_session(root)
+            config = session.config()
+
+            self.assertEqual(config["map"]["source_status"], "stale")
+            self.assertEqual(config["recognition"]["summary"]["mapped_categories"], 0)
+            with self.assertRaisesRegex(ValueError, "禁止导航"):
+                session.plan("请带我到客厅沙发旁")
 
 
 if __name__ == "__main__":

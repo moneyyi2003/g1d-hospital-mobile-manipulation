@@ -29,9 +29,11 @@ class FamilyHomeFormalMappingTest(unittest.TestCase):
         )
         anchors = {
             "sofa": (-2.7, 1.2),
+            "couch": (-2.7, 1.2),
             "bed": (-2.7, -2.2),
             "dining table": (2.0, 3.0),
             "kitchen counter": (3.6, 3.8),
+            "book": (-0.2, 3.6),
         }
         observations = []
         for index, prompt in enumerate(prompts):
@@ -72,6 +74,44 @@ class FamilyHomeFormalMappingTest(unittest.TestCase):
             self.assertGreater(int((semantic > 0).sum()), 0)
             self.assertEqual(set(np.unique(regions)) - {0}, {1, 2, 3, 4})
             self.assertFalse(metadata["isaac_fixture_geometry_used"])
+
+    def test_layers_include_labels_discovered_beyond_navigation_ontology(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            prompts = (*SEMANTIC_LABELS, "book")
+            map_yaml, evidence, _alignment = self.make_inputs(root, prompts=prompts)
+
+            metadata = build_scan_semantic_layers(
+                map_yaml, evidence, root / "semantic"
+            )
+
+            self.assertIn("book", metadata["anchors"])
+            self.assertIn("book", metadata["labels"].values())
+
+    def test_post_discovery_alias_can_approve_navigation_place(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            prompts = ("couch", "bed", "dining table", "kitchen counter")
+            map_yaml, evidence, alignment = self.make_inputs(root, prompts=prompts)
+            semantic = root / "semantic"
+            build_scan_semantic_layers(map_yaml, evidence, semantic)
+
+            payload = build_formal_place_catalog(
+                map_yaml,
+                evidence,
+                alignment,
+                semantic / "region_map.npy",
+                root / "places.json",
+                household_object_set_signature="test-signature",
+            )
+
+            sofa = next(
+                item for item in payload["places"] if item["id"] == "living_room_sofa"
+            )
+            self.assertEqual(sofa["metadata"]["semantic_prompt"], "couch")
+            self.assertEqual(
+                payload["map"]["household_object_set_signature"], "test-signature"
+            )
 
     def test_places_require_matching_semantic_evidence(self):
         with tempfile.TemporaryDirectory() as directory:

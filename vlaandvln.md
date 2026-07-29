@@ -13,8 +13,9 @@
 现有 Hospital VLN 是正式语义导航基线；多货架 Warehouse 和多区域家庭场景复用相同的
 地图/地点/规划/路径跟随组件，并通过独立场景 adapter 接入 Agent，不会让语言模型或
 VLA 直接生成全局坐标。家庭场景已经从 215 帧 G1-D 自采 RGB 生成 LingBot 点云和
-occupancy，并接入 SAM3.1、region、地点审核与网页；当前只检测并批准
-`living_room_sofa`，床、餐桌和操作台保持拒绝。当前 VLA 尚未交付，因此代码提供了明确的 backend 插槽；
+occupancy，并接入 SAM3.1、region、地点审核与网页。新版感知先由 Florence-2 在没有
+类别清单、USD 语义或物体坐标的情况下从 G1-D RGB 自主生成标签，再由 SAM3 跟踪；旧图
+当前只批准 `living_room_sofa`，新增物品后的正式图正在重建。当前 VLA 尚未交付，因此代码提供了明确的 backend 插槽；
 执行到 VLA 步骤时会返回 `blocked`，不会把“导航到物体旁边”误报为“抓取成功”。
 
 这里的 G1-D 是家庭轮式双臂机器人。现阶段验收目标是先在 Isaac Sim 6.0.1 中用同构
@@ -38,7 +39,7 @@ G1DTaskAgent / RuleTaskPlanner
 VLN:
 HospitalVlnAdapter / WarehouseVlnAdapter / FamilyHomeVlnAdapter
   -> 现有 hospital-vln / hospital-object-docking / warehouse-vln-formal / home-vln-formal
-  -> LingBot/SAM3 语义制品 + 审核数据库
+  -> Florence-2 自主发现 + LingBot/SAM3 语义制品 + 审核数据库
   -> DeepSeek 只选择 place_id
   -> occupancy/path/Nav2 或现有 Isaac runner
   -> G1-D 底盘到达并停止
@@ -73,11 +74,12 @@ Hospital VLN 的数据和执行链保持原样：
 1. G1-D 戴头部相机在 Hospital 环境巡检并采集 RGB。
 2. LingBot-Map 只接收 RGB，预测深度、相机运动和三维点云。
 3. 推理后进行米制 Sim(3) 对齐；若使用 pose-anchored 融合，必须在制品中明确标注。
-4. SAM3/语义处理识别物体或区域，把审核后的地点、物品和停靠位写入语义数据库。
-5. 生成 occupancy map、region 信息和 semantic map。
-6. 用户给出模糊指令时，现有 DeepSeek 解析器只能从审核数据库选择 `place_id`；它不能
+4. Florence-2 只看 RGB 和任务 token 自主生成标签/框；不向它提供场景类别清单。
+5. SAM3 使用自主标签和首见帧跟踪，投影后把审核地点、物品和停靠位写入语义数据库。
+6. 生成 occupancy map、region 信息和 semantic map。
+7. 用户给出模糊指令时，现有 DeepSeek 解析器只能从审核数据库选择 `place_id`；它不能
    生成坐标。
-7. 程序从数据库读取 docking pose，在 occupancy map 上规划并调用现有导航执行层。
+8. 程序从数据库读取 docking pose，在 occupancy map 上规划并调用现有导航执行层。
 
 Agent 只决定“这个阶段需要 VLN”，然后调用以下已有入口：
 
@@ -115,9 +117,11 @@ Warehouse 的 bootstrap 和正式 occupancy 路线都已在 `--wheel-physics-onl
 SAM3.1 货架语义投影和正式地点审核也已完成。证据边界见
 `docs/WAREHOUSE_G1D_NAV.md`。
 
-家庭场景由卧室、客厅、餐区和厨房组成，已完成 19.285 m G1-D RGB 巡检和 215 帧
+家庭场景由卧室、客厅、餐区和厨房组成。新增无语义家庭实体后已重新完成
+19.285 m G1-D RGB 巡检和 215 帧
 `640x360` 采集。LingBot 只读取这批 RGB，推理后采用明确标注的 pose-anchored 米制
-融合，生成 169 × 153、0.05 m/cell occupancy。SAM3.1 沙发提示得到 87 条原始检测，
+融合；旧图曾生成 169 × 153、0.05 m/cell occupancy。新版 Florence-2 自主发现实际
+接受 14 个跨帧标签，其中包括新增 `houseplant` 和 `monitor`。旧 SAM3.1 沙发提示得到 87 条原始检测，
 经 36 帧防漂移窗口保留 36 条 map-frame 证据并生成停靠位；其他三类在
 0.50 和 0.20 阈值下均无检测，因此不会使用预设家具坐标补齐。正式沙发导航实际成功，
 523 帧、1.838 m、0.119 m/0.120 rad。

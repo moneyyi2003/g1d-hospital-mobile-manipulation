@@ -24,6 +24,12 @@ PROMPT_BY_PLACE = {
     "kitchen_counter": "kitchen counter",
 }
 SEMANTIC_LABELS = tuple(PROMPT_BY_PLACE.values())
+PROMPT_ALIASES_BY_PLACE = {
+    "living_room_sofa": ("sofa", "couch"),
+    "bedroom_bed": ("bed", "mattress"),
+    "dining_area": ("dining table", "dinner table"),
+    "kitchen_counter": ("kitchen counter", "kitchen countertop", "countertop"),
+}
 
 
 def _load_observations(path: Path) -> tuple[dict[str, Any], list[dict[str, Any]]]:
@@ -47,6 +53,38 @@ def _prompt_observations(
         and float(item.get("score", 0.0)) >= 0.35
         and int(item.get("point_count", 0)) >= 30
     ]
+
+
+def _accepted_labels(observations: list[dict[str, Any]]) -> tuple[str, ...]:
+    """Return model-generated labels in first-observation order."""
+
+    labels: list[str] = []
+    seen: set[str] = set()
+    for item in observations:
+        prompt = str(item.get("prompt", "")).strip()
+        key = prompt.casefold()
+        if (
+            prompt
+            and key not in seen
+            and float(item.get("score", 0.0)) >= 0.35
+            and int(item.get("point_count", 0)) >= 30
+        ):
+            labels.append(prompt)
+            seen.add(key)
+    return tuple(labels)
+
+
+def _place_evidence(
+    observations: list[dict[str, Any]], place_id: str
+) -> tuple[str, list[dict[str, Any]]]:
+    """Match autonomous labels to navigation concepts after discovery."""
+
+    aliases = tuple(alias.casefold() for alias in PROMPT_ALIASES_BY_PLACE[place_id])
+    for prompt in _accepted_labels(observations):
+        key = prompt.casefold()
+        if any(key == alias or alias in key for alias in aliases):
+            return prompt, _prompt_observations(observations, prompt)
+    return PROMPT_BY_PLACE[place_id], []
 
 
 def _anchor(items: list[dict[str, Any]]) -> tuple[float, float]:
@@ -99,10 +137,11 @@ def build_scan_semantic_layers(
     grid = load_ros_occupancy(map_yaml)
     _payload, observations = _load_observations(semantic_observations)
     height, width = grid.cells.shape
-    votes = np.zeros((len(SEMANTIC_LABELS), height, width), dtype=np.float32)
+    semantic_labels = _accepted_labels(observations)
+    votes = np.zeros((len(semantic_labels), height, width), dtype=np.float32)
     anchors: dict[str, tuple[float, float]] = {}
 
-    for label_index, prompt in enumerate(SEMANTIC_LABELS):
+    for label_index, prompt in enumerate(semantic_labels):
         items = _prompt_observations(observations, prompt)
         if not items:
             continue
@@ -140,7 +179,7 @@ def build_scan_semantic_layers(
     distances = np.full((height, width), np.inf, dtype=np.float64)
     frontier: list[tuple[float, int, int, int]] = []
     region_labels: dict[int, str] = {}
-    for region_id, prompt in enumerate(SEMANTIC_LABELS, start=1):
+    for region_id, prompt in enumerate(semantic_labels, start=1):
         if prompt not in anchors:
             continue
         x, y = anchors[prompt]
@@ -180,13 +219,16 @@ def build_scan_semantic_layers(
         "schema_version": 1,
         "artifact_type": "family_home_scan_derived_semantic_region_layers",
         "frame_id": "map",
-        "labels": {str(index + 1): prompt for index, prompt in enumerate(SEMANTIC_LABELS)},
+        "labels": {str(index + 1): prompt for index, prompt in enumerate(semantic_labels)},
         "region_labels": {str(key): value for key, value in region_labels.items()},
         "anchors": {key: [value[0], value[1]] for key, value in anchors.items()},
         "shape": [height, width],
         "resolution": grid.resolution,
         "origin": [grid.origin_x, grid.origin_y],
-        "semantic_source": "official_sam3.1_masks_projected_through_lingbot_rgb_only_geometry",
+        "semantic_source": (
+            "florence2_category_free_labels+official_sam3.1_masks_projected_through_"
+            "lingbot_rgb_only_geometry"
+        ),
         "region_source": "geodesic_partition_of_lingbot_occupancy_from_semantic_anchors",
         "isaac_fixture_geometry_used": False,
     }
@@ -236,6 +278,7 @@ def build_formal_place_catalog(
     output_file: Path,
     *,
     reviewer: str = "family_home_scan_map_engineering_review",
+    household_object_set_signature: str = "",
 ) -> dict[str, Any]:
     """Generate each docking pose from its matching scan-derived object anchor."""
 
@@ -249,8 +292,7 @@ def build_formal_place_catalog(
     regions = np.load(region_map, allow_pickle=False)
     places: list[dict[str, Any]] = []
     for definition in PLACES:
-        prompt = PROMPT_BY_PLACE[definition.place_id]
-        evidence = _prompt_observations(observations, prompt)
+        prompt, evidence = _place_evidence(observations, definition.place_id)
         base = {
             "id": definition.place_id,
             "name": definition.name,
@@ -316,6 +358,7 @@ def build_formal_place_catalog(
             "selected_docking_candidate": candidate_id,
             "metadata": {
                 "semantic_prompt": prompt,
+                "discovered_labels": [prompt],
                 "semantic_anchor_xy": [anchor[0], anchor[1]],
                 "semantic_observation_count": len(evidence),
                 "track_ids": sorted({str(item["track_id"]) for item in evidence}),
@@ -341,9 +384,10 @@ def build_formal_place_catalog(
                 else "lingbot_rgb_only_global_sim3"
             ),
             "yaml": str(map_yaml),
+            "household_object_set_signature": household_object_set_signature,
         },
         "semantic_evidence": {
-            "source": "official_sam3.1_text_video_tracking",
+            "source": "florence2_category_free_discovery+official_sam3.1_text_video_tracking",
             "artifact": str(semantic_observations),
         },
         "places": places,
@@ -355,6 +399,7 @@ def build_formal_place_catalog(
 
 __all__ = [
     "PROMPT_BY_PLACE",
+    "PROMPT_ALIASES_BY_PLACE",
     "SEMANTIC_LABELS",
     "build_formal_place_catalog",
     "build_scan_semantic_layers",

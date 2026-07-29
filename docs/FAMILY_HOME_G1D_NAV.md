@@ -14,8 +14,10 @@
 - 餐区：`dining_area`
 - 厨房：`kitchen_counter`
 
-隔墙保留适合 G1-D 约 0.8 m 直径 footprint 通过的门洞。新增家具目前是有颜色、碰撞和
-语义属性的基础几何体，重点用于导航、建图和任务链验证，不是最终写实美术资产。现有
+隔墙保留适合 G1-D 约 0.8 m 直径 footprint 通过的门洞。场景还从本机 ReplicaCAD
+数据加入植物、台灯、显示器、篮子、杯、碗、包、书、遥控器和厨房小物件。这些物品有
+可见网格和碰撞，但使用 `Item01...` 不透明 prim 名，不注册类别语义；源码里的
+`evaluation_label` 只用于离线验收，绝不送给机器人。现有
 SofaTablePlant 缺少部分相对路径贴图，因此沙发几何和碰撞可用，但渲染会报告材质缺失。
 
 MobileManiBench 配置中虽有更完整的家庭资产名称，但本机缺少完整官方资产包。当前实现
@@ -36,11 +38,18 @@ MobileManiBench 配置中虽有更完整的家庭资产名称，但本机缺少�
 首次建立地图，或者场景/相机发生变化后，才运行家庭 RGB 巡检：
 
 ```bash
+./mobilemanibench.sh home-assets
 ./mobilemanibench.sh home-survey --headless --resolution 640x360
+./mobilemanibench.sh home-discover
 ./mobilemanibench.sh home-map
 ```
 
-这两步是离线准备流程，耗时明显，不能把它们当成每次打开网页都要执行的启动命令。正式
+`home-discover` 只给 Florence-2 `<OD>` / `<DENSE_REGION_CAPTION>` 任务 token 和
+机器人 RGB；它不读取 USD 语义、物品坐标或类别清单。全图与重叠局部视图的模型输出先
+经过跨帧一致性和结构/巡检线伪影门，再把模型自己生成的标签与首见帧交给 SAM3。人工
+`--sam3-prompt` 只允许显式诊断 override，正式流程不会使用。
+
+这些步骤是离线准备流程，耗时明显，不能把它们当成每次打开网页都要执行的启动命令。正式
 四层制品已经存在且场景没有变化时，日常使用只运行：
 
 ```bash
@@ -52,13 +61,13 @@ MobileManiBench 配置中虽有更完整的家庭资产名称，但本机缺少�
 
 - 960 × 540 RTX 跟随相机中的 G1-D 导航过程；
 - Point Cloud：G1-D 自采 RGB 经 LingBot-Map 生成的 RGB 点云；
-- Semantic：SAM3.1 mask 经 LingBot 深度投影并过滤后期跟踪漂移；
+- Semantic：自主发现标签驱动的 SAM3.1 mask 经 LingBot 深度投影并过滤后期跟踪漂移；
 - Occupancy：LingBot RGB-only 深度点云生成的 ROS 栅格；
 - Region：正式可通行空间按已通过的 SAM3 语义锚点做测地划分；
 - 同一 `map` 坐标系中的规划路径、实际轨迹、机器人朝向、速度和航点。
 - G1-D 巡检帧数、SAM3 原始检测数、通过过滤的 map-frame 证据数、语义锚点坐标；
 - 客厅、卧室、餐区、厨房分别是“已确认”还是“巡检覆盖但语义未确认”；
-- 每个物体是“已识别并可导航”“已识别但未开放”还是“未识别”。
+- Florence-2 自己生成了哪些物体名称、跨多少帧、是否已由 SAM3 投影入图及是否可导航。
 
 网页只接受 Point Cloud、Semantic、Occupancy、Region 四层都存在的正式 bundle；任一
 文件缺失即拒绝启动，不会退回 bootstrap。当前审核只开放“客厅沙发旁”，所以网页不会
@@ -101,13 +110,17 @@ Agent 只生成任务计划：
   G1-D、家庭家具和绿色规划路线。
 - LingBot 实际处理 215 帧 RGB；全局 Sim(3) 只有 22/215 个对应点通过 0.45 m 门槛而被
   拒绝，随后以明确标注的 pose-anchored 离线融合生成 169 × 153、0.05 m/cell 正式图。
-- SAM3.1 沙发提示得到 87 个检测；人工检查发现离开视野后有跟踪漂移，正式投影用提示帧
+- 旧正式图的 SAM3.1 沙发提示得到 87 个检测；人工检查发现离开视野后有跟踪漂移，正式投影用提示帧
   起 36 帧窗口保留 36 条证据。床、餐桌、操作台在 0.50 和 0.20 阈值下均为 0，地点
   审核结果为 1 approved / 3 rejected。
 - 正式扫描地图上的沙发导航成功：2 个 waypoint、1.838 m、523 帧，位置误差
   0.119 m、航向误差 0.120 rad。
 - 正式网页 API 返回 169 × 153 地图、四层 `FORMAL` 资产和唯一获批沙发地点；对未批准
   卧室指令返回 HTTP 400，未启动 Isaac。
+- 新增无语义家庭物品后的 G1-D 重巡检仍为 215 帧并成功。Florence-2 在 80 个均匀
+  RGB 帧及其无类别局部视图上自主生成 621 条原始检测；跨帧质量门接受 14 个标签，
+  包括新增实体 `houseplant`（14 帧）和 `monitor`（2 帧）。这一步没有读取资产名称或
+  坐标；新物品版本的 LingBot/SAM3 正式四层尚待重建，因此旧正式图不能用于新版导航。
 
 以上导航使用 `stable_assisted`，用于稳定验证语言目标、地图、规划、相机和 Agent
 高层链路。它会写轮速，同时以确定性平面位姿更新保证回归，不等于家庭场景已经通过
@@ -119,19 +132,21 @@ Agent 只生成任务计划：
 正式导航输入。正式步骤由 `scripts/build_family_home_map.py` 实现：
 
 1. 用 `home-survey` 让 G1-D 头部相机覆盖卧室、客厅、餐区和厨房。
-2. LingBot-Map 只读取 `survey/rgb/*.png`，输出视觉深度、相机运动和点云。
-3. LingBot 推理完成后，再使用巡检相机位姿做米制 Sim(3) 对齐；若改用
+2. Florence-2 只读取 RGB，以任务 token 自主发现物体标签和框；至少跨两个巡检帧才进入
+   后续候选，不把场景配置中的物品名称告诉模型。
+3. LingBot-Map 只读取 `survey/rgb/*.png`，输出视觉深度、相机运动和点云。
+4. LingBot 推理完成后，再使用巡检相机位姿做米制 Sim(3) 对齐；若改用
    pose-anchored 融合，必须在制品中显式标注。
-4. 用 SAM3 对床、沙发、餐桌和操作台做语义对齐，把检测通过深度和 TF 投影到
-   `map`。
-5. 从点云构建 ROS occupancy map，并按 G1-D footprint 膨胀障碍。
-6. 审核每个地点的 docking pose、朝向、clearance、路径可达性和地图哈希，只开放通过
+5. 用自主发现的标签和首见帧启动 SAM3，把 mask 通过 LingBot 深度和 TF 投影到 `map`。
+6. 从点云构建 ROS occupancy map，并按 G1-D footprint 膨胀障碍。
+7. 发现完成后才把 `couch/sofa` 等模型词汇映射到导航地点 ontology；审核 docking
+   pose、朝向、clearance、路径可达性和地图哈希，只开放通过
    的地点 ID。
-7. 正式产物写到
+8. 正式产物写到
    `outputs/family_home_vln/lingbot_map/map.yaml` 和
    `outputs/family_home_vln/places_formal.json`，再运行 `home-vln-formal`。
-8. 网页还要求 `mapping_summary.json` 引用真实四层 PNG，缺失时 fail-closed。
-9. 正式地图通过后，才在同一场景做 `--wheel-physics-only` 三次连续导航与制动验收。
+9. 网页还要求 `mapping_summary.json` 引用真实四层 PNG，缺失时 fail-closed。
+10. 正式地图通过后，才在同一场景做 `--wheel-physics-only` 三次连续导航与制动验收。
 
 相机位姿不能作为 LingBot 的模型输入，也不能把 Isaac 几何直接栅格化后标成
 “RGB-only 正式地图”。

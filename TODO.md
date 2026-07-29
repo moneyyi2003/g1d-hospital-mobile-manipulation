@@ -7,10 +7,12 @@
 Hospital 语义导航已经通过；多货架 Warehouse 已完成 G1-D RGB 巡检、LingBot
 RGB-only 建图、SAM3.1 语义投影、正式地点审核和 occupancy 替换。东侧货架正式定向路线
 也已在 `--wheel-physics-only` 下连续三次通过。面向最终家庭任务的新多区域家庭场景已
-完成 G1-D RGB 巡检、LingBot RGB-only 点云/occupancy、SAM3.1 投影、region 和正式
-网页。沙发地点已由扫描证据生成停靠位并完成正式导航；床、餐桌、操作台因 SAM3 无检测
-保持拒绝。当前唯一近期仿真主线是更换/改进这三类低多边形家庭资产后重新扫描审核，而
-不是用预设地图或坐标补齐；真机主线仍是把
+完成过 G1-D RGB 巡检、LingBot RGB-only 点云/occupancy、SAM3.1 投影、region 和正式
+网页。现已加入不带类别语义的 ReplicaCAD 家庭物品，并完成新版 215 帧重巡检和
+Florence-2 无类别清单自主发现：621 条原始检测经跨帧门接受 14 个标签，包括新增
+`houseplant` 和 `monitor`。物品版本改变后旧正式图按设计失效；当前唯一近期仿真主线是
+用这批新 RGB 重跑 LingBot/SAM3/semantic/region/地点审核，而不是用预设地图、资产名称
+或坐标补齐；真机主线仍是把
 fail-closed ROS 2/Nav2 接口接到已确认的实体 G1-D 厂商驱动、硬急停和真实定位传感器，
 在外部条件到位前不得打开硬件输出。
 Hospital TCP dashboard 已能在浏览器同步显示 Isaac chase camera、LingBot RGB 点云和
@@ -122,6 +124,14 @@ VLN → VLA；VLA 仍等待外部团队交付，不属于当前已验收能力�
 - [x] 家庭网页首屏改为不等待四层图片解码，地图渐进加载并缓存；新增 G1-D 扫描识别
   报告，明确显示 215 帧 RGB、4 类提示、沙发 87 次原始检测/36 条 map-frame 证据，
   以及床、餐桌、操作台 0 检测和不可导航原因。
+- [x] 家庭场景加入 11 个本地 ReplicaCAD 可见碰撞实体；USD prim 仅使用
+  `Item01...`，不注册类别语义，资产真值名称和坐标不会进入感知模型。
+- [x] 新增 `home-assets` / `home-discover` 和 category-free Florence-2 首阶段：
+  只接收 RGB 与 `<OD>` / `<DENSE_REGION_CAPTION>` task token，使用重叠局部视图、
+  跨帧一致性、结构/巡检线伪影过滤和描述词归一化，再把模型生成标签交给 SAM3。
+- [x] 新物品版本实际重巡检成功：3750 帧、215 张 `640x360` RGB、终点
+  0.119 m/0.119 rad；80 个抽样帧的自主发现产生 621 条原始检测，接受 14 类，
+  `houseplant` 跨 14 帧、`monitor` 跨 2 帧。巡检和发现制品均声明未提供类别清单。
 
 ## 当前问题
 
@@ -158,10 +168,10 @@ VLN → VLA；VLA 仍等待外部团队交付，不属于当前已验收能力�
 - [ ] **P1：MobileManiBench 官方 G1/YCB smoke 仍缺完整资产。**
   2026-07-28 `./mobilemanibench.sh doctor` 为 12/15；项目 G1-D 和已有房间资产可用，
   但官方 G1/YCB/完整 `Assets.zip` 检查未通过，不能执行官方 reset/step 验收。
-- [ ] **P1：家庭正式语义目前只开放沙发。** 床、餐桌、操作台在 SAM3.1 的 0.50 和
-  0.20 阈值下均为 0 检测，保持 rejected；低多边形基础家具和 SofaTablePlant 缺失贴图
-  造成明显视觉域问题。必须改进/替换资产后重新 RGB 巡检和审核，不能读取预设家具坐标
-  补齐地点。
+- [ ] **P1：新增家庭物品后的正式图尚未重建。** 新巡检和 category-free 发现已通过，
+  但 LingBot/SAM3/semantic/region/地点库仍是旧物品版本；runner 会按物品集签名
+  fail-closed。必须运行 `home-map` 并审核自主标签的 mask/map-frame 证据，不能复用
+  旧 occupancy 或读取预设物体坐标。
 - [ ] **P1：家庭 region 目前只有一个语义锚点。** 算法已按正式 occupancy 和检测锚点
   做测地划分，但因仅沙发通过，当前只有一个 region ID；至少三类新增语义证据通过后再
   验收多区域划分。
@@ -176,11 +186,10 @@ VLN → VLA；VLA 仍等待外部团队交付，不属于当前已验收能力�
 
 ## 下一步执行计划
 
-### 0. 家庭场景剩余语义覆盖（唯一近期仿真下一步）
+### 0. 家庭自主发现后的正式地图重建（唯一近期仿真下一步）
 
-- 用更真实的床、餐桌和厨房操作台 USD 替换当前基础方块资产，保留碰撞、门洞和 G1-D
-  footprint 约束。
-- 重新运行 `home-survey -> home-map`，分别人工检查 SAM3 提示帧和 mask；每类必须有
+- [x] 加入真实尺度家庭物品并重新运行 `home-assets -> home-survey -> home-discover`。
+- 运行 `home-map`，分别人工检查自主发现标签的 SAM3 首见帧和 mask；每类必须有
   稳定 map-frame 证据，晚期跟踪漂移不得进入地点审核。
 - 只从匹配类别的语义锚点附近生成 footprint-safe、可达、面向物体的 docking pose；
   未检出类别继续 rejected。

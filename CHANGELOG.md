@@ -5,6 +5,40 @@
 
 ## 2026-07-29
 
+### 家庭物品实体与无类别清单自主发现
+
+- 从本机 ReplicaCAD 加入植物、台灯、显示器、篮子、杯、碗、包、书、遥控器和厨房
+  小物件；`home-assets` 转换为 ignored USD。场景只暴露 `Item01...` prim 和可见/
+  碰撞几何，不注册类别语义，源码真值仅供离线验收。
+- 新增 `home-discover`：Florence-2 只接收 G1-D RGB 和 `<OD>` /
+  `<DENSE_REGION_CAPTION>` task token，通过全图/重叠局部视图自行生成标签和框；跨帧
+  一致性、结构/绿色巡检线过滤及颜色/材质描述归一化均不读取场景真值。
+- `home-map` 改为先自主发现、再把模型生成的标签和首见帧交给 SAM3；人工 prompt
+  必须显式启用诊断 override。semantic/region 支持动态标签，地点 ontology 只在发现
+  后做别名审核，不反向提示感知。
+- 巡检、LingBot、SAM3 和正式地点增加 survey/object-set 签名门；物品集或 RGB 变化后
+  旧缓存和旧 occupancy 会 fail-closed。网页识别报告改为展示模型自己发现的名称、
+  跨帧次数、SAM3/map 证据和导航审核状态。
+
+验证：
+
+- 主 Isaac Sim 6.0.1 成功转换 11 个 GLB 并完成新版家庭巡检：3750 帧、215 张
+  640×360 RGB、终点误差 0.119 m/0.119 rad。
+- Florence-2 base-ft 在 80 个均匀 RGB 帧及无类别局部视图上生成 621 条原始检测；
+  跨帧门接受 14 个标签，包括新增实体 `houseplant`（14 帧）和 `monitor`（2 帧）。
+- discovery/formal mapping/dashboard 共 15 项轻量测试通过；Python、shell 语法检查
+  通过。
+- `home-map --stage discover` 命中同一 survey/pipeline 签名缓存；实际网页 config
+  返回 14 个自主发现类别、0 个新版 map 类别和 `stale`，旧图下发导航指令返回 HTTP
+  400，未启动 Isaac。
+
+已知限制：
+
+- 本次只完成新版 RGB 巡检与自主发现实测；LingBot/SAM3/semantic/region/地点库仍是
+  旧物品版本，必须重新运行并审核 `home-map`，因此新版正式导航当前按设计拒绝启动。
+- Florence-2 仍会产生 `bathtub`、`board` 等候选；它们会保留在报告中，只有形成
+  SAM3 map-frame 证据并通过地点审核后才允许影响导航。
+
 ### 家庭网页快速首屏与扫描识别报告
 
 - 家庭网页初始化不再等待四张正式图层全部解码；配置、状态和识别结果先显示，Point
