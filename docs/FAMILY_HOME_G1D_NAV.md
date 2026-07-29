@@ -39,6 +39,12 @@ MobileManiBench 配置中虽有更完整的家庭资产名称，但本机缺少�
 ./mobilemanibench.sh home-survey --headless --resolution 640x360
 ```
 
+从巡检 RGB 构建正式四层地图：
+
+```bash
+./mobilemanibench.sh home-map
+```
+
 家庭实时可视化控制台：
 
 ```bash
@@ -49,31 +55,30 @@ MobileManiBench 配置中虽有更完整的家庭资产名称，但本机缺少�
 同步显示：
 
 - 960 × 540 RTX 跟随相机中的 G1-D 导航过程；
-- Point Cloud：当前为 952 个碰撞几何点云代理点；
-- Semantic：家具类别和审核地点；
-- Occupancy：按 0.40 m G1-D footprint 膨胀的可通行栅格；
-- Region：卧室、客厅、餐区、厨房和通行区；
+- Point Cloud：G1-D 自采 RGB 经 LingBot-Map 生成的 RGB 点云；
+- Semantic：SAM3.1 mask 经 LingBot 深度投影并过滤后期跟踪漂移；
+- Occupancy：LingBot RGB-only 深度点云生成的 ROS 栅格；
+- Region：正式可通行空间按已通过的 SAM3 语义锚点做测地划分；
 - 同一 `map` 坐标系中的规划路径、实际轨迹、机器人朝向、速度和航点。
 
-当前四个地图层都会显示 `BOOTSTRAP`。即使目录中仅出现
-`map.yaml`、`places_formal.json` 和 `mapping_summary.json`，控制台也不会自动去掉该
-标记；只有 Point Cloud、Semantic、Occupancy 和 Region 四层正式制品分别审核并接入后
-才能切换为 `FORMAL`。
+网页只接受 Point Cloud、Semantic、Occupancy、Region 四层都存在的正式 bundle；任一
+文件缺失即拒绝启动，不会退回 bootstrap。当前审核只开放“客厅沙发旁”，所以网页不会
+显示或执行卧室、餐桌和操作台指令。
 
 Agent 只生成任务计划：
 
 ```bash
 ./mobilemanibench.sh agent \
   --navigation-scene home \
-  --command '我困了，请带我到卧室床边'
+  --command '请带我到客厅沙发旁'
 ```
 
-当前 `home-vln` 显式允许 bootstrap，只用于集成回归。将来正式地图通过审核后，使用：
+`home-vln` 仍显式允许 bootstrap，只用于集成回归。Agent 和网页默认使用：
 
 ```bash
 ./mobilemanibench.sh home-vln-formal \
   --headless --test --no-camera \
-  --command '请带我到餐桌旁'
+  --command '请带我到客厅沙发旁'
 ```
 
 `home-vln-formal` 不带 `--allow-bootstrap`。正式地图或地点文件不存在、哈希不匹配或地点
@@ -89,36 +94,50 @@ Agent 只生成任务计划：
   最终位置误差 0.119 m、航向误差 0.119 rad，成功；
 - 四个地点均通过 0.40 m footprint 安全、从起点可达和审核 catalog 约束测试；
 - 原 SimpleRoom 回归仍为 657 帧、2.733 m、0.119 m/0.119 rad，成功。
-- 家庭网页 API 实际提交卧室任务：状态按
+- 初版 bootstrap 家庭网页 API 曾实际提交卧室任务：状态按
   `starting -> loading -> running -> succeeded` 更新，530 帧、55 个实时轨迹采样点；
   餐桌任务为 548 帧、73 个轨迹采样点。MJPEG 可读取，卧室/餐区最终帧已目视确认能看到
   G1-D、家庭家具和绿色规划路线。
+- LingBot 实际处理 215 帧 RGB；全局 Sim(3) 只有 22/215 个对应点通过 0.45 m 门槛而被
+  拒绝，随后以明确标注的 pose-anchored 离线融合生成 169 × 153、0.05 m/cell 正式图。
+- SAM3.1 沙发提示得到 87 个检测；人工检查发现离开视野后有跟踪漂移，正式投影用提示帧
+  起 36 帧窗口保留 36 条证据。床、餐桌、操作台在 0.50 和 0.20 阈值下均为 0，地点
+  审核结果为 1 approved / 3 rejected。
+- 正式扫描地图上的沙发导航成功：2 个 waypoint、1.838 m、523 帧，位置误差
+  0.119 m、航向误差 0.120 rad。
+- 正式网页 API 返回 169 × 153 地图、四层 `FORMAL` 资产和唯一获批沙发地点；对未批准
+  卧室指令返回 HTTP 400，未启动 Isaac。
 
 以上导航使用 `stable_assisted`，用于稳定验证语言目标、地图、规划、相机和 Agent
 高层链路。它会写轮速，同时以确定性平面位姿更新保证回归，不等于家庭场景已经通过
 `--wheel-physics-only` 纯轮地接触验收。
 
-## 4. 从 RGB 巡检替换成正式地图
+## 4. 从 RGB 巡检生成正式地图
 
-当前 `family_home_vln/layout.py` 生成的 occupancy 和地点文件都有
-`reviewed_procedural_family_home_bootstrap` 标记，不能作为正式建图结果。替换步骤是：
+`family_home_vln/layout.py` 生成的 bootstrap 仍只用于巡检路线和显式回归，不能作为
+正式导航输入。正式步骤由 `scripts/build_family_home_map.py` 实现：
 
 1. 用 `home-survey` 让 G1-D 头部相机覆盖卧室、客厅、餐区和厨房。
 2. LingBot-Map 只读取 `survey/rgb/*.png`，输出视觉深度、相机运动和点云。
 3. LingBot 推理完成后，再使用巡检相机位姿做米制 Sim(3) 对齐；若改用
    pose-anchored 融合，必须在制品中显式标注。
-4. 用 SAM3 对床、沙发、餐桌、操作台和门洞做语义对齐，把检测通过深度和 TF 投影到
+4. 用 SAM3 对床、沙发、餐桌和操作台做语义对齐，把检测通过深度和 TF 投影到
    `map`。
 5. 从点云构建 ROS occupancy map，并按 G1-D footprint 膨胀障碍。
 6. 审核每个地点的 docking pose、朝向、clearance、路径可达性和地图哈希，只开放通过
    的地点 ID。
-7. 将正式产物写到
+7. 正式产物写到
    `outputs/family_home_vln/lingbot_map/map.yaml` 和
    `outputs/family_home_vln/places_formal.json`，再运行 `home-vln-formal`。
-8. 正式地图通过后，才在同一场景做 `--wheel-physics-only` 三次连续导航与制动验收。
+8. 网页还要求 `mapping_summary.json` 引用真实四层 PNG，缺失时 fail-closed。
+9. 正式地图通过后，才在同一场景做 `--wheel-physics-only` 三次连续导航与制动验收。
 
 相机位姿不能作为 LingBot 的模型输入，也不能把 Isaac 几何直接栅格化后标成
 “RGB-only 正式地图”。
+
+当前家具是低多边形基础几何，SAM3 未能把蓝色方块床、灰色餐桌和操作台识别为对应类别。
+这是当前资产/视觉域限制，不应通过读取 `HOME_FIXTURES` 坐标绕过。下一步应替换为更真实、
+具有稳定视觉外观的家庭 USD，重新巡检并复核提示帧，再重新审核这三个地点。
 
 ## 5. Agent、VLA 与真机接口
 

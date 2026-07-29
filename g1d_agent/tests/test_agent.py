@@ -184,7 +184,7 @@ class HospitalVlnAdapterTest(unittest.TestCase):
 
         self.assertEqual(
             adapter.command_for(navigation)[:2],
-            ["/workspace/mobilemanibench.sh", "home-vln"],
+            ["/workspace/mobilemanibench.sh", "home-vln-formal"],
         )
         result = adapter.execute(docking)
         self.assertEqual(result.status, StepStatus.BLOCKED)

@@ -5,6 +5,33 @@
 
 ## 2026-07-29
 
+### 家庭自扫描正式地图、语义地点与 fail-closed 网页
+
+- 新增 `home-map`：从 G1-D 自采 RGB 依次运行 LingBot、推理后米制对齐、点云/
+  occupancy、SAM3.1、map-frame 投影、semantic/region、地点审核和四层预览。
+- 家庭地点不再从预设家具坐标批准；每个地点必须有匹配类别的 SAM3 证据，停靠位从该
+  语义锚点附近的正式 occupancy 安全可达栅格生成并面向物体。
+- 修复 `--test` 隐式启用 bootstrap 的问题；Agent 改用 `home-vln-formal`。家庭网页
+  只加载正式四层资产，缺少任一制品即拒绝启动，未审核地点也不会启动 Isaac。
+- SAM3 正向/反向切换触发上游 `No points are provided` 后，家庭顺序巡检采用
+  forward-only；增加提示后 36 帧投影门，过滤物体离开视野后的 tracker drift。
+
+验证：
+
+- LingBot 实际处理 215 帧；全局 Sim(3) 仅 22/215 对应点通过 0.45 m 门槛而被拒绝，
+  pose-anchored 推理后融合生成 169 × 153、0.05 m/cell occupancy。
+- 沙发 87 个 SAM3 原始检测中 36 条通过时间窗并投影到 map；床、餐桌、操作台在
+  0.50/0.20 阈值下均为 0，因此地点审核为 1 approved / 3 rejected。
+- 正式沙发导航成功：523 帧、1.838 m、位置误差 0.119 m、航向误差 0.120 rad。
+- 家庭测试 12/12、Agent 测试 28/28、Python/JavaScript 语法通过；网页 API 返回正式
+  169 × 153 四层地图和唯一获批沙发地点，未批准卧室指令返回 400。
+
+已知限制：
+
+- 当前低多边形床、餐桌和操作台未被 SAM3 识别；必须改善资产后重新巡检，不能以场景
+  真值坐标补齐。
+- 正式路线仍是 `stable_assisted`，尚未做家庭 `--wheel-physics-only` 连续三次验收。
+
 ### 家庭导航五视图实时网页
 
 - 新增 `home-web` 6012/TCP 控制台：用户输入家庭地点指令后，服务端从审核 catalog

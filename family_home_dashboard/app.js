@@ -4,6 +4,7 @@ const app = {
   mapData: null,
   state: null,
   cameraStarted: false,
+  layerImages: {},
 };
 
 const categoryColors = {
@@ -188,10 +189,15 @@ function drawRegions() {
 
 function drawMaps() {
   if (!app.config || !app.mapData || !app.state) return;
-  drawPointcloud();
-  drawSemantic();
-  drawOccupancy();
-  drawRegions();
+  for (const layer of app.config.layers) {
+    const ctx = setupCanvas(`${layer.id}Canvas`);
+    const { width, height } = app.config.map;
+    ctx.fillStyle = "#060b09";
+    ctx.fillRect(0, 0, width, height);
+    const image = app.layerImages[layer.id];
+    if (image && image.complete) ctx.drawImage(image, 0, 0, width, height);
+    drawOverlay(ctx);
+  }
 }
 
 function render() {
@@ -266,6 +272,12 @@ async function initialize() {
   ]);
   $("sourceBadge").textContent = app.config.map.source_label;
   $("mapTruth").textContent = app.mapData.truth_boundary || "FORMAL MAP BUNDLE";
+  await Promise.all(app.config.layers.map(async (layer) => {
+    const image = new Image();
+    image.src = `${layer.asset}?bundle=${Date.now()}`;
+    app.layerImages[layer.id] = image;
+    await image.decode();
+  }));
   $("placeChips").innerHTML = app.config.places
     .map((place) => `<button type="button" data-id="${place.id}">${place.name}</button>`)
     .join("");

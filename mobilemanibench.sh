@@ -68,6 +68,15 @@ case "${command_name}" in
             --survey \
             --output-dir "${WORKSPACE_DIR}/outputs/family_home_vln" "$@"
         ;;
+    home-map)
+        if [[ ! -x "${LINGBOT_ENV_DIR}/bin/python" ]]; then
+            echo "LingBot-Map environment is missing: ${LINGBOT_ENV_DIR}" >&2
+            exit 1
+        fi
+        export PYTHONPATH="${WORKSPACE_DIR}:${WORKSPACE_DIR}/lingbot_semantic_nav/src:${WORKSPACE_DIR}/lingbot_semantic_nav/third_party/lingbot-map:${PYTHONPATH:-}"
+        exec "${LINGBOT_ENV_DIR}/bin/python" \
+            "${WORKSPACE_DIR}/scripts/build_family_home_map.py" "$@"
+        ;;
     home-web)
         exec python3 "${WORKSPACE_DIR}/scripts/serve_family_home_dashboard.py" "$@"
         ;;
@@ -171,16 +180,17 @@ case "${command_name}" in
         exec "${ENV_DIR}/bin/python" "$@"
         ;;
     help|-h|--help)
-        echo "Usage: ./mobilemanibench.sh {isaacsim|smoke|g1-d-smoke|vln|simple-room-vln|home-vln|home-vln-formal|home-survey|home-web|warehouse-survey|warehouse-map|warehouse-vln|warehouse-vln-formal|warehouse-scene-audit|hospital-survey|hospital-map|hospital-vln|hospital-demo|hospital-web|hospital-docking|hospital-object-docking|hospital-object-web|agent|g1d-real-nav|doctor|convert-urdf|python} [args...]"
+        echo "Usage: ./mobilemanibench.sh {isaacsim|smoke|g1-d-smoke|vln|simple-room-vln|home-vln|home-vln-formal|home-survey|home-map|home-web|warehouse-survey|warehouse-map|warehouse-vln|warehouse-vln-formal|warehouse-scene-audit|hospital-survey|hospital-map|hospital-vln|hospital-demo|hospital-web|hospital-docking|hospital-object-docking|hospital-object-web|agent|g1d-real-nav|doctor|convert-urdf|python} [args...]"
         echo "  isaacsim     Launch the pinned MobileManiBench Isaac Sim GUI environment."
         echo "  smoke        Load one headless MobileManiBench G1/YCB environment."
         echo "  g1-d-smoke   Load and step the converted custom G1_D articulation."
         echo "  vln          Run the deterministic G1_D language-to-point navigation baseline."
         echo "  simple-room-vln  Navigate G1_D to a language goal in SimpleRoom (GUI by default)."
         echo "  home-vln     Navigate G1-D in the multi-zone family-home bootstrap scene."
-        echo "  home-vln-formal Navigate with the future reviewed family-home LingBot map."
+        echo "  home-vln-formal Navigate with the reviewed scan-derived family-home map."
         echo "  home-survey  Collect G1-D RGB across bedroom/living/dining/kitchen zones."
-        echo "  home-web     Serve the family-home live camera/map dashboard (port 6012)."
+        echo "  home-map     Build LingBot pointcloud/occupancy and SAM3 semantic/region/place artifacts."
+        echo "  home-web     Serve the fail-closed formal family-home dashboard (port 6012)."
         echo "  warehouse-survey Record G1-D RGB in MobileManiBench's multi-shelf Warehouse."
         echo "  warehouse-map Build formal LingBot RGB-only, SAM3, occupancy, and place artifacts."
         echo "  warehouse-vln Navigate G1-D with the explicit collision bootstrap."

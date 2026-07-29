@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Serve the TCP-only G1-D family-home navigation dashboard."""
+"""Serve fail-closed navigation from the scanned family-home map bundle."""
 
 from __future__ import annotations
 
@@ -8,7 +8,6 @@ from dataclasses import asdict
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
-import math
 import os
 from pathlib import Path
 import signal
@@ -23,51 +22,13 @@ DEFAULT_ARTIFACTS = ROOT / "outputs/family_home_vln"
 DEFAULT_OUTPUT = ROOT / "outputs/family_home_web"
 sys.path.insert(0, str(ROOT))
 
-from family_home_vln.layout import (  # noqa: E402
-    BASE_OBSTACLES,
-    HOME_FIXTURES,
-    HOME_REGIONS,
-    MAP_BOUNDS,
-    PLACES,
-    ROBOT_RADIUS_M,
-    SCENE_NAME,
-    START_POSE,
-    build_grid,
-)
+from family_home_vln.layout import ROBOT_RADIUS_M, SCENE_NAME, START_POSE  # noqa: E402
+from simple_room_vln.artifacts import load_lingbot_artifacts  # noqa: E402
 from simple_room_vln.core import path_length, resolve_place  # noqa: E402
 
 
 def _read_json(path: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
-
-
-def _rectangle_points(
-    bounds: tuple[float, float, float, float],
-    *,
-    category: str,
-    step: float = 0.08,
-) -> list[dict]:
-    xmin, ymin, xmax, ymax = bounds
-    points = []
-    horizontal_count = max(2, math.ceil((xmax - xmin) / step))
-    vertical_count = max(2, math.ceil((ymax - ymin) / step))
-    for index in range(horizontal_count + 1):
-        x = xmin + (xmax - xmin) * index / horizontal_count
-        points.extend(
-            (
-                {"x": x, "y": ymin, "category": category},
-                {"x": x, "y": ymax, "category": category},
-            )
-        )
-    for index in range(1, vertical_count):
-        y = ymin + (ymax - ymin) * index / vertical_count
-        points.extend(
-            (
-                {"x": xmin, "y": y, "category": category},
-                {"x": xmax, "y": y, "category": category},
-            )
-        )
-    return points
 
 
 class FamilyHomeDashboardSession:
@@ -77,83 +38,85 @@ class FamilyHomeDashboardSession:
         self.live_dir = self.output / "live"
         self.output.mkdir(parents=True, exist_ok=True)
         self.live_dir.mkdir(parents=True, exist_ok=True)
-        self.grid = build_grid()
-        self.places = list(PLACES)
+        self.map_yaml = self.artifacts / "lingbot_map/map.yaml"
+        self.places_json = self.artifacts / "places_formal.json"
+        self.summary_path = self.artifacts / "mapping_summary.json"
+        missing = [
+            path
+            for path in (self.map_yaml, self.places_json, self.summary_path)
+            if not path.is_file()
+        ]
+        if missing:
+            raise FileNotFoundError(
+                "家庭网页拒绝使用 bootstrap；请先运行 ./mobilemanibench.sh "
+                "home-survey 和 home-map。缺少：" + ", ".join(str(path) for path in missing)
+            )
+        self.summary = _read_json(self.summary_path)
+        self.grid, self.places = load_lingbot_artifacts(
+            self.map_yaml, self.places_json, robot_radius_m=ROBOT_RADIUS_M
+        )
+        raw_assets = self.summary.get("assets", {})
+        required = {"rgb_pointcloud", "semantic", "occupancy", "region"}
+        if not required <= set(raw_assets):
+            raise ValueError(
+                "家庭网页要求正式 pointcloud/semantic/occupancy/region 四层，缺少："
+                + ", ".join(sorted(required - set(raw_assets)))
+            )
+        self.map_assets = {key: Path(raw_assets[key]).resolve() for key in required}
+        missing_assets = [path for path in self.map_assets.values() if not path.is_file()]
+        if missing_assets:
+            raise FileNotFoundError(
+                "mapping_summary 引用的图层不存在：" + ", ".join(str(path) for path in missing_assets)
+            )
         self._places_by_id = {place.place_id: place for place in self.places}
         self._lock = threading.RLock()
         self._process: subprocess.Popen | None = None
         self._log_stream = None
         self._started_at: float | None = None
         self._last_command = ""
-        self.formal_bundle_detected = all(
-            (
-                (self.artifacts / "lingbot_map/map.yaml").is_file(),
-                (self.artifacts / "places_formal.json").is_file(),
-                (self.artifacts / "mapping_summary.json").is_file(),
-            )
-        )
-        # A formal navigation bundle alone is not enough for this four-layer
-        # UI. Keep every layer bootstrap-labelled until pointcloud, semantic,
-        # occupancy and region assets are each reviewed and wired.
-        self.formal_map_ready = False
 
     def config(self) -> dict:
-        xmin, ymin, xmax, ymax = MAP_BOUNDS
-        source_status = "formal" if self.formal_map_ready else "bootstrap"
-        source_label = (
-            "LingBot / SAM3 正式制品"
-            if self.formal_map_ready
-            else "BOOTSTRAP · 等待 LingBot / SAM3 正式替换"
+        map_metadata = self.summary["map"]
+        bounds = map_metadata["bounds"]
+        layer_descriptions = {
+            item["id"]: item.get("description", "")
+            for item in map_metadata.get("layers", [])
+        }
+        layer_keys = (
+            ("pointcloud", "rgb_pointcloud", "Point Cloud"),
+            ("semantic", "semantic", "Semantic"),
+            ("occupancy", "occupancy", "Occupancy"),
+            ("region", "region", "Region"),
         )
         return {
             "schema_version": 1,
             "scene": SCENE_NAME,
             "mode": "isaac_family_home",
             "map": {
-                "width": self.grid.width,
-                "height": self.grid.height,
-                "resolution": self.grid.resolution,
-                "flip_y": True,
+                "width": int(map_metadata["width"]),
+                "height": int(map_metadata["height"]),
+                "resolution": float(map_metadata["resolution"]),
+                "flip_y": bool(map_metadata.get("flip_y", True)),
                 "bounds": {
-                    "min_x": xmin,
-                    "max_x": xmax,
-                    "min_y": ymin,
-                    "max_y": ymax,
+                    "min_x": float(bounds["min_x"]),
+                    "max_x": float(bounds["max_x"]),
+                    "min_y": float(bounds["min_z"]),
+                    "max_y": float(bounds["max_z"]),
                 },
-                "source_status": source_status,
-                "source_label": source_label,
-                "formal_bundle_detected": self.formal_bundle_detected,
+                "source_status": "formal",
+                "source_label": "G1-D 扫描 · LingBot / SAM3 正式制品",
+                "formal_bundle_detected": True,
                 "robot_radius_m": ROBOT_RADIUS_M,
             },
             "layers": [
                 {
-                    "id": "pointcloud",
-                    "label": "Point Cloud",
-                    "status": source_status,
-                    "description": (
-                        "LingBot RGB 点云"
-                        if self.formal_map_ready
-                        else "碰撞几何点云代理，不是 LingBot RGB-only 输出"
-                    ),
-                },
-                {
-                    "id": "semantic",
-                    "label": "Semantic",
-                    "status": source_status,
-                    "description": "家具语义和审核地点叠加",
-                },
-                {
-                    "id": "occupancy",
-                    "label": "Occupancy",
-                    "status": source_status,
-                    "description": "按 G1-D footprint 膨胀的可通行栅格",
-                },
-                {
-                    "id": "region",
-                    "label": "Region",
-                    "status": source_status,
-                    "description": "卧室、客厅、餐区、厨房和通行区",
-                },
+                    "id": public_id,
+                    "label": label,
+                    "status": "formal",
+                    "asset": f"/asset/map/{asset_id}.png",
+                    "description": layer_descriptions.get(asset_id, ""),
+                }
+                for public_id, asset_id, label in layer_keys
             ],
             "places": [
                 {
@@ -169,42 +132,12 @@ class FamilyHomeDashboardSession:
         }
 
     def map_data(self) -> dict:
-        xmin, ymin, xmax, ymax = MAP_BOUNDS
-        pointcloud = _rectangle_points(
-            (xmin, ymin, xmax, ymax),
-            category="wall",
-        )
-        for bounds in BASE_OBSTACLES:
-            pointcloud.extend(_rectangle_points(bounds, category="existing_furniture"))
-        for fixture in HOME_FIXTURES:
-            pointcloud.extend(
-                _rectangle_points(fixture.bounds_xy, category=fixture.category)
-            )
         return {
             "schema_version": 1,
-            "source": (
-                "formal_lingbot_sam3"
-                if self.formal_map_ready
-                else "reviewed_procedural_family_home_bootstrap"
-            ),
-            "truth_boundary": (
-                None
-                if self.formal_map_ready
-                else "Point cloud is a geometry proxy; replace all layers after LingBot/SAM3 review."
-            ),
-            "occupancy_rows": [
-                "".join("." if cell else "#" for cell in row)
-                for row in self.grid.free
-            ],
-            "pointcloud": pointcloud,
-            "fixtures": [
-                {
-                    **asdict(fixture),
-                    "bounds_xy": fixture.bounds_xy,
-                }
-                for fixture in HOME_FIXTURES
-            ],
-            "regions": [asdict(region) for region in HOME_REGIONS],
+            "source": "g1d_rgb_survey+lingbot_rgb_only+sam3.1",
+            "truth_boundary": None,
+            "map_yaml": str(self.map_yaml),
+            "places": str(self.places_json),
         }
 
     def _idle_state(self) -> dict:
@@ -317,7 +250,6 @@ class FamilyHomeDashboardSession:
                 str(ROOT / "run_g1d_simple_room_vln.py"),
                 "--scene-profile",
                 "family-home",
-                "--allow-bootstrap",
                 "--headless",
                 "--test",
                 "--no-camera",
@@ -325,6 +257,10 @@ class FamilyHomeDashboardSession:
                 command,
                 "--output-dir",
                 str(self.artifacts),
+                "--map",
+                str(self.map_yaml),
+                "--places",
+                str(self.places_json),
                 "--live-dir",
                 str(self.live_dir),
                 "--live-fps",
@@ -397,6 +333,11 @@ class FamilyHomeHandler(BaseHTTPRequestHandler):
             return self._send_json(self.server.session.map_data())
         if path == "/api/state":
             return self._send_json(self.server.session.snapshot())
+        if path.startswith("/asset/map/") and path.endswith(".png"):
+            layer_id = Path(path).stem
+            source = self.server.session.map_assets.get(layer_id)
+            if source is not None:
+                return self._send_bytes(source.read_bytes(), "image/png")
         if path == "/stream/camera.mjpg":
             return self._send_camera_stream()
         self.send_error(HTTPStatus.NOT_FOUND, "Resource not found")
@@ -482,7 +423,7 @@ def main() -> int:
     server.session = session
     print(f"Family-home dashboard: http://{args.host}:{args.port}")
     print(f"Map source: {session.config()['map']['source_label']}")
-    print("Examples: 请带我到卧室床边 / 请带我到餐桌旁 / 请带我到厨房操作台")
+    print("Approved destinations: " + " / ".join(place.name for place in session.places))
     try:
         server.serve_forever()
     except KeyboardInterrupt:

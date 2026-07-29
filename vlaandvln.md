@@ -12,8 +12,9 @@
 
 现有 Hospital VLN 是正式语义导航基线；多货架 Warehouse 和多区域家庭场景复用相同的
 地图/地点/规划/路径跟随组件，并通过独立场景 adapter 接入 Agent，不会让语言模型或
-VLA 直接生成全局坐标。家庭场景当前完成的是 bootstrap 导航和 RGB 巡检，正式
-LingBot/SAM3 地图仍待生成。当前 VLA 尚未交付，因此代码提供了明确的 backend 插槽；
+VLA 直接生成全局坐标。家庭场景已经从 215 帧 G1-D 自采 RGB 生成 LingBot 点云和
+occupancy，并接入 SAM3.1、region、地点审核与网页；当前只检测并批准
+`living_room_sofa`，床、餐桌和操作台保持拒绝。当前 VLA 尚未交付，因此代码提供了明确的 backend 插槽；
 执行到 VLA 步骤时会返回 `blocked`，不会把“导航到物体旁边”误报为“抓取成功”。
 
 这里的 G1-D 是家庭轮式双臂机器人。现阶段验收目标是先在 Isaac Sim 6.0.1 中用同构
@@ -36,7 +37,7 @@ G1DTaskAgent / RuleTaskPlanner
 
 VLN:
 HospitalVlnAdapter / WarehouseVlnAdapter / FamilyHomeVlnAdapter
-  -> 现有 hospital-vln / hospital-object-docking / warehouse-vln / home-vln
+  -> 现有 hospital-vln / hospital-object-docking / warehouse-vln-formal / home-vln-formal
   -> LingBot/SAM3 语义制品 + 审核数据库
   -> DeepSeek 只选择 place_id
   -> occupancy/path/Nav2 或现有 Isaac runner
@@ -97,10 +98,10 @@ Agent 只决定“这个阶段需要 VLN”，然后调用以下已有入口：
   --steps 12000 --position-tolerance 0.20 --yaw-tolerance 0.20 \
   --command '请带我到东侧货架通道'
 
-# 多区域家庭场景 bootstrap 导航；正式地图生成后改用 home-vln-formal
-./mobilemanibench.sh home-vln \
+# 多区域家庭场景：仅使用 G1-D 扫描生成的正式地图
+./mobilemanibench.sh home-vln-formal \
   --headless --test --no-camera \
-  --command '我困了，请带我到卧室床边'
+  --command '请带我到客厅沙发旁'
 ```
 
 区域导航仍使用审核地点库。物体操作前必须把 SAM3/检测结果转换成带交互面朝向和安全
@@ -115,9 +116,11 @@ SAM3.1 货架语义投影和正式地点审核也已完成。证据边界见
 `docs/WAREHOUSE_G1D_NAV.md`。
 
 家庭场景由卧室、客厅、餐区和厨房组成，已完成 19.285 m G1-D RGB 巡检和 215 帧
-`640x360` 采集。当前地点和 occupancy 明确标记为 bootstrap；必须按
-`docs/FAMILY_HOME_G1D_NAV.md` 用 LingBot RGB-only、SAM3 语义投影和人工地点审核替换，
-再开放 `home-vln-formal`。
+`640x360` 采集。LingBot 只读取这批 RGB，推理后采用明确标注的 pose-anchored 米制
+融合，生成 169 × 153、0.05 m/cell occupancy。SAM3.1 沙发提示得到 87 条原始检测，
+经 36 帧防漂移窗口保留 36 条 map-frame 证据并生成停靠位；其他三类在
+0.50 和 0.20 阈值下均无检测，因此不会使用预设家具坐标补齐。正式沙发导航实际成功，
+523 帧、1.838 m、0.119 m/0.120 rad。
 
 ## 4. Agent 如何做决定
 
@@ -203,7 +206,7 @@ DeepSeek 仍位于现有 VLN 内部，负责把模糊地点描述约束到审核
 
 ./mobilemanibench.sh agent \
   --navigation-scene home \
-  --command '我困了，请带我到卧室床边'
+  --command '请带我到客厅沙发旁'
 ```
 
 计划和结果写入 `outputs/g1d_agent/mission.json`。该输出不进入 Git。

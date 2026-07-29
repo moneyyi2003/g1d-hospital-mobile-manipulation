@@ -228,7 +228,7 @@ class FamilyHomeVlnAdapter:
             )
         command = [
             str(self.workspace / "mobilemanibench.sh"),
-            "home-vln",
+            "home-vln-formal",
             "--command",
             step.instruction,
         ]
@@ -270,7 +270,7 @@ class FamilyHomeVlnAdapter:
                         ),
                         "places": str(
                             self.workspace
-                            / "outputs/family_home_vln/places.json"
+                            / "outputs/family_home_vln/places_formal.json"
                         ),
                     },
                 },

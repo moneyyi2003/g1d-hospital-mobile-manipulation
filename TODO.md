@@ -7,8 +7,10 @@
 Hospital 语义导航已经通过；多货架 Warehouse 已完成 G1-D RGB 巡检、LingBot
 RGB-only 建图、SAM3.1 语义投影、正式地点审核和 occupancy 替换。东侧货架正式定向路线
 也已在 `--wheel-physics-only` 下连续三次通过。面向最终家庭任务的新多区域家庭场景已
-完成 G1-D bootstrap 导航和全屋 RGB 巡检。当前唯一近期仿真主线是用这批家庭 RGB
-运行 LingBot RGB-only 和 SAM3，审核地点并替换成正式 occupancy；真机主线仍是把
+完成 G1-D RGB 巡检、LingBot RGB-only 点云/occupancy、SAM3.1 投影、region 和正式
+网页。沙发地点已由扫描证据生成停靠位并完成正式导航；床、餐桌、操作台因 SAM3 无检测
+保持拒绝。当前唯一近期仿真主线是更换/改进这三类低多边形家庭资产后重新扫描审核，而
+不是用预设地图或坐标补齐；真机主线仍是把
 fail-closed ROS 2/Nav2 接口接到已确认的实体 G1-D 厂商驱动、硬急停和真实定位传感器，
 在外部条件到位前不得打开硬件输出。
 Hospital TCP dashboard 已能在浏览器同步显示 Isaac chase camera、LingBot RGB 点云和
@@ -108,8 +110,15 @@ VLN → VLA；VLA 仍等待外部团队交付，不属于当前已验收能力�
 - [x] 新增家庭 6012/TCP 实时网页：输入审核地点指令后启动 Isaac，同步显示 G1-D
   960x540 跟随画面、Point Cloud、Semantic、Occupancy、Region、规划路径和实际轨迹。
 - [x] 家庭网页端到端验证卧室和餐桌任务：卧室 530 帧/55 个轨迹点，餐桌
-  548 帧/73 个轨迹点；状态、MJPEG 和最终画面均通过。所有地图层当前显式标为
-  `BOOTSTRAP`。
+  548 帧/73 个轨迹点；状态、MJPEG 和最终画面均通过。该初版验证当时所有地图层均
+  显式标为 `BOOTSTRAP`，现已由下述正式四层实现替换。
+- [x] 家庭 215 帧 RGB 完成 LingBot 推理；全局 Sim(3) 因仅 22/215 对应点通过阈值而
+  被拒绝，使用明确标注的 pose-anchored 推理后融合生成 169 × 153、0.05 m/cell
+  occupancy。
+- [x] 家庭 SAM3.1 沙发提示产生 87 个检测，经 36 帧漂移门过滤保留 36 条 map-frame
+  证据；正式 semantic/region/pointcloud/occupancy 四层和 fail-closed 网页已接入。
+- [x] 正式地点审核只批准扫描生成的 `living_room_sofa` 停靠位；正式 Isaac 导航
+  523 帧、1.838 m、位置误差 0.119 m、航向误差 0.120 rad，成功。
 
 ## 当前问题
 
@@ -146,13 +155,13 @@ VLN → VLA；VLA 仍等待外部团队交付，不属于当前已验收能力�
 - [ ] **P1：MobileManiBench 官方 G1/YCB smoke 仍缺完整资产。**
   2026-07-28 `./mobilemanibench.sh doctor` 为 12/15；项目 G1-D 和已有房间资产可用，
   但官方 G1/YCB/完整 `Assets.zip` 检查未通过，不能执行官方 reset/step 验收。
-- [ ] **P1：家庭场景仍是 bootstrap 地图。** RGB 巡检已经完成，但尚未运行 LingBot
-  RGB-only、SAM3 语义投影、正式 occupancy 和地点人工审核；SofaTablePlant 还缺部分
-  材质贴图。不得把当前几何栅格或地点标成正式语义地图。
-- [ ] **P1：家庭网页正式四层制品尚未接入。** 当前 Point Cloud 是 952 个碰撞几何
-  代理点，Semantic/Region 来自审核布局，Occupancy 来自 bootstrap grid；即使只出现
-  正式导航三件套，网页仍保持 `BOOTSTRAP`。需要分别接入并审核正式点云、语义、
-  occupancy 和 region 后才能改成 `FORMAL`。
+- [ ] **P1：家庭正式语义目前只开放沙发。** 床、餐桌、操作台在 SAM3.1 的 0.50 和
+  0.20 阈值下均为 0 检测，保持 rejected；低多边形基础家具和 SofaTablePlant 缺失贴图
+  造成明显视觉域问题。必须改进/替换资产后重新 RGB 巡检和审核，不能读取预设家具坐标
+  补齐地点。
+- [ ] **P1：家庭 region 目前只有一个语义锚点。** 算法已按正式 occupancy 和检测锚点
+  做测地划分，但因仅沙发通过，当前只有一个 region ID；至少三类新增语义证据通过后再
+  验收多区域划分。
 - [ ] **P1：家庭场景尚未做纯轮地接触验收。** 当前导航与巡检是
   `stable_assisted`；正式地图完成后，需要在家庭门洞和家具附近做
   `--wheel-physics-only` 连续三次导航、制动和姿态门槛验证。
@@ -164,14 +173,15 @@ VLN → VLA；VLA 仍等待外部团队交付，不属于当前已验收能力�
 
 ## 下一步执行计划
 
-### 0. 家庭场景正式 RGB-only 地图（唯一近期仿真下一步）
+### 0. 家庭场景剩余语义覆盖（唯一近期仿真下一步）
 
-- 对 `outputs/family_home_vln/survey/rgb/` 的 215 张图运行 LingBot-Map；模型输入只允许
-  RGB，Isaac pose 只在推理后用于米制对齐。
-- 用 SAM3 对床、沙发、餐桌、厨房操作台和门洞做投影，生成正式 occupancy。
-- 审核四个家庭地点的 docking pose、clearance、定向 approach、可达性和地图哈希；
-  只有通过审核的地点才进入 `places_formal.json`。
-- 用 `home-vln-formal` 做语言导航，再以 `--wheel-physics-only` 连续三次验证家庭路线。
+- 用更真实的床、餐桌和厨房操作台 USD 替换当前基础方块资产，保留碰撞、门洞和 G1-D
+  footprint 约束。
+- 重新运行 `home-survey -> home-map`，分别人工检查 SAM3 提示帧和 mask；每类必须有
+  稳定 map-frame 证据，晚期跟踪漂移不得进入地点审核。
+- 只从匹配类别的语义锚点附近生成 footprint-safe、可达、面向物体的 docking pose；
+  未检出类别继续 rejected。
+- 三类地点通过后验收多 region，再以 `--wheel-physics-only` 连续三次验证家庭路线。
 
 ### 0. Hospital 三视图演示使用方式
 

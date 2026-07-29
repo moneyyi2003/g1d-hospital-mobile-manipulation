@@ -244,6 +244,29 @@ def load_lingbot_artifacts(
     *,
     robot_radius_m: float = ROBOT_RADIUS_M,
 ) -> tuple[GridMap, list[Place]]:
+    payload = json.loads(places_json.read_text(encoding="utf-8"))
+    expected = str(payload.get("map", {}).get("sha256", "")).strip().casefold()
+    if len(expected) != 64:
+        raise ValueError(f"formal place catalog has no map bundle sha256: {places_json}")
+    text = map_yaml.read_text(encoding="utf-8")
+    fields = {}
+    for line in text.splitlines():
+        if ":" in line and not line.lstrip().startswith("#"):
+            key, value = line.split(":", 1)
+            fields[key.strip()] = value.strip().strip("'\"")
+    try:
+        image_path = (map_yaml.parent / fields["image"]).resolve()
+    except KeyError as exc:
+        raise ValueError(f"invalid ROS map YAML: {map_yaml}") from exc
+    digest = hashlib.sha256()
+    for path in (map_yaml.resolve(), image_path):
+        digest.update(path.name.encode("utf-8"))
+        digest.update(path.read_bytes())
+    actual = digest.hexdigest()
+    if actual != expected:
+        raise ValueError(
+            f"formal map/place hash mismatch: expected {expected}, got {actual}"
+        )
     return (
         load_ros_grid(map_yaml, robot_radius_m=robot_radius_m),
         load_approved_places(places_json),

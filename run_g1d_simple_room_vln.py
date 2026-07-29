@@ -490,7 +490,7 @@ class SurveyRecorder:
 
 def main() -> int:
     args.output_dir.mkdir(parents=True, exist_ok=True)
-    if args.survey or args.test or args.allow_bootstrap:
+    if args.survey or args.allow_bootstrap:
         if args.scene_profile == "family-home":
             grid, places = build_family_home_bootstrap_artifacts(args.output_dir)
             map_source = "reviewed_procedural_family_home_bootstrap"
