@@ -124,6 +124,73 @@ button:disabled { opacity: .42; cursor: wait; }
 .progress i { display: block; width: 0; height: 100%; background: var(--lime); transition: width .2s; }
 
 .workspace { display: grid; grid-template-columns: minmax(0, 2.4fr) minmax(280px, .8fr); gap: 12px; margin-top: 12px; }
+.recognition-section { margin-top: 28px; }
+.recognition-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.summary-card {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 5px 12px;
+  align-items: center;
+  min-height: 82px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  background: rgba(15, 22, 18, .93);
+}
+.summary-card span { color: var(--muted); font-size: 10px; letter-spacing: .08em; }
+.summary-card strong { color: var(--lime); font: 900 28px/1 ui-monospace, monospace; }
+.summary-card small { grid-column: 1 / -1; color: #bac7c0; font-size: 10px; }
+.recognition-layout {
+  display: grid;
+  grid-template-columns: 1.15fr .85fr;
+  gap: 10px;
+}
+.result-list { display: grid; }
+.result-row {
+  display: grid;
+  grid-template-columns: 9px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  min-height: 76px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--line);
+}
+.result-row:last-child { border-bottom: 0; }
+.result-row > i {
+  width: 8px;
+  height: 8px;
+  border: 1px solid #647068;
+  transform: rotate(45deg);
+}
+.result-row.approved > i { border-color: var(--lime); background: var(--lime); box-shadow: 0 0 10px rgba(184, 243, 74, .45); }
+.result-row.recognized_not_approved > i { border-color: var(--orange); background: var(--orange); }
+.result-row.not_detected > i, .result-row.surveyed > i { background: #313b35; }
+.result-title { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.result-title b { font-size: 13px; }
+.result-title code { color: var(--cyan); font: 700 9px/1 ui-monospace, monospace; }
+.result-row p { margin-top: 5px; color: #a9b8b0; font-size: 10px; line-height: 1.45; }
+.result-row small { display: block; margin-top: 4px; color: var(--muted); font-size: 9px; }
+.result-row > span {
+  color: var(--muted);
+  font: 800 9px/1.2 ui-monospace, monospace;
+  text-align: right;
+  white-space: nowrap;
+}
+.result-row.approved > span { color: var(--lime); }
+.result-row.recognized_not_approved > span { color: var(--orange); }
+.truth-note {
+  padding: 9px 12px;
+  border: 1px solid rgba(255, 181, 94, .22);
+  border-top: 0;
+  color: #c3a379;
+  background: rgba(255, 181, 94, .035);
+  font-size: 10px;
+  line-height: 1.5;
+}
 .panel-head {
   min-height: 58px;
   display: flex;
@@ -187,6 +254,8 @@ button:disabled { opacity: .42; cursor: wait; }
 h3 { font-size: 14px; }
 .layer-status { padding: 5px 7px; color: var(--orange); font-size: 8px; }
 .layer-status.formal { color: var(--lime); }
+.layer-status.loading { color: var(--muted); }
+.layer-status.error { color: var(--danger); }
 .canvas-shell { aspect-ratio: 1 / 1; }
 canvas { width: 100%; height: 100%; display: block; }
 .panel-caption { min-height: 47px; padding: 10px 13px; color: var(--muted); font-size: 10px; line-height: 1.45; }
@@ -196,6 +265,7 @@ footer { display: flex; justify-content: space-between; gap: 12px; padding: 22px
   .mission-panel { grid-template-columns: 1fr 2fr; }
   .mission-state { grid-column: 1 / -1; }
   .map-grid { grid-template-columns: 1fr 1fr; }
+  .recognition-summary { grid-template-columns: 1fr 1fr; }
 }
 @media (max-width: 860px) {
   .topbar { align-items: flex-start; }
@@ -203,6 +273,7 @@ footer { display: flex; justify-content: space-between; gap: 12px; padding: 22px
   .mission-panel, .workspace { grid-template-columns: 1fr; }
   .mission-state { grid-column: auto; }
   .camera-shell { aspect-ratio: 16 / 9; }
+  .recognition-layout { grid-template-columns: 1fr; }
   .section-heading { align-items: flex-start; flex-direction: column; }
   .section-heading p { text-align: left; }
 }
@@ -213,5 +284,6 @@ footer { display: flex; justify-content: space-between; gap: 12px; padding: 22px
   .command-row { grid-template-columns: 1fr 1fr; }
   .command-row input { grid-column: 1 / -1; }
   .map-grid { grid-template-columns: 1fr; }
+  .recognition-summary { grid-template-columns: 1fr 1fr; }
   footer { flex-direction: column; }
 }

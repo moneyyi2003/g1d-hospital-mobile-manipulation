@@ -33,19 +33,15 @@ MobileManiBench 配置中虽有更完整的家庭资产名称，但本机缺少�
   --command '我困了，请带我到卧室床边'
 ```
 
-家庭 RGB 巡检：
+首次建立地图，或者场景/相机发生变化后，才运行家庭 RGB 巡检：
 
 ```bash
 ./mobilemanibench.sh home-survey --headless --resolution 640x360
-```
-
-从巡检 RGB 构建正式四层地图：
-
-```bash
 ./mobilemanibench.sh home-map
 ```
 
-家庭实时可视化控制台：
+这两步是离线准备流程，耗时明显，不能把它们当成每次打开网页都要执行的启动命令。正式
+四层制品已经存在且场景没有变化时，日常使用只运行：
 
 ```bash
 ./mobilemanibench.sh home-web --host 0.0.0.0 --port 6012
@@ -60,10 +56,15 @@ MobileManiBench 配置中虽有更完整的家庭资产名称，但本机缺少�
 - Occupancy：LingBot RGB-only 深度点云生成的 ROS 栅格；
 - Region：正式可通行空间按已通过的 SAM3 语义锚点做测地划分；
 - 同一 `map` 坐标系中的规划路径、实际轨迹、机器人朝向、速度和航点。
+- G1-D 巡检帧数、SAM3 原始检测数、通过过滤的 map-frame 证据数、语义锚点坐标；
+- 客厅、卧室、餐区、厨房分别是“已确认”还是“巡检覆盖但语义未确认”；
+- 每个物体是“已识别并可导航”“已识别但未开放”还是“未识别”。
 
 网页只接受 Point Cloud、Semantic、Occupancy、Region 四层都存在的正式 bundle；任一
 文件缺失即拒绝启动，不会退回 bootstrap。当前审核只开放“客厅沙发旁”，所以网页不会
-显示或执行卧室、餐桌和操作台指令。
+执行卧室、餐桌和操作台指令，但会在识别报告中保留它们的 0 检测和拒绝原因。页面首屏、
+状态和识别报告不等待 Isaac；只有提交导航指令后才冷启动 Isaac，因此 RTX 画面会晚于
+网页本身出现。
 
 Agent 只生成任务计划：
 

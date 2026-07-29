@@ -16,6 +16,15 @@ const categoryColors = {
   cabinet: "#b89070",
 };
 
+function escapeHtml(value) {
+  return String(value)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
 async function request(url, options) {
   const response = await fetch(url, options);
   const payload = await response.json();
@@ -200,6 +209,71 @@ function drawMaps() {
   }
 }
 
+function renderRecognition() {
+  const recognition = app.config?.recognition;
+  if (!recognition) return;
+  const summary = recognition.summary;
+  const survey = recognition.survey;
+  $("recognitionSource").textContent = recognition.source;
+  const resolution = Array.isArray(survey.resolution)
+    ? `${survey.resolution[0]}×${survey.resolution[1]}`
+    : "未知分辨率";
+  $("recognitionSummary").innerHTML = [
+    ["RGB 巡检帧", survey.frame_count, resolution],
+    ["目标类别", summary.object_categories, "SAM3 提示类别"],
+    ["识别成功", summary.recognized, `${summary.semantic_regions} 个语义区域`],
+    ["可导航地点", summary.approved_destinations, `${summary.not_detected} 类未检出`],
+  ].map(([label, value, detail]) => `
+    <div class="summary-card">
+      <span>${escapeHtml(label)}</span>
+      <strong>${escapeHtml(value)}</strong>
+      <small>${escapeHtml(detail)}</small>
+    </div>
+  `).join("");
+
+  $("objectResults").innerHTML = recognition.objects.map((item) => {
+    const statusLabel = item.status === "approved"
+      ? "已识别 · 可导航"
+      : item.status === "recognized_not_approved"
+        ? "已识别 · 未开放"
+        : "未识别";
+    const anchor = Array.isArray(item.anchor_xy)
+      ? `x ${item.anchor_xy[0].toFixed(2)} · y ${item.anchor_xy[1].toFixed(2)}`
+      : "无语义坐标";
+    const evidence = item.recognized
+      ? `原始检测 ${item.raw_detections} · 地图证据 ${item.map_observations} · ${anchor}`
+      : `原始检测 ${item.raw_detections} · 地图证据 0`;
+    return `
+      <div class="result-row ${escapeHtml(item.status)}">
+        <i aria-hidden="true"></i>
+        <div>
+          <div class="result-title">
+            <b>${escapeHtml(item.name)}</b>
+            <code>${escapeHtml(item.prompt)}</code>
+          </div>
+          <p>${escapeHtml(evidence)}</p>
+          ${item.review_reason ? `<small>${escapeHtml(item.review_reason)}</small>` : ""}
+        </div>
+        <span>${statusLabel}</span>
+      </div>
+    `;
+  }).join("");
+
+  $("sceneResults").innerHTML = recognition.scenes.map((scene) => {
+    const confirmed = scene.status === "confirmed";
+    return `
+      <div class="result-row ${confirmed ? "approved" : "surveyed"}">
+        <i aria-hidden="true"></i>
+        <div>
+          <div class="result-title"><b>${escapeHtml(scene.name)}</b></div>
+          <p>${escapeHtml(scene.evidence)}</p>
+        </div>
+        <span>${confirmed ? "已确认" : "待确认"}</span>
+      </div>
+    `;
+  }).join("");
+}
+
 function render() {
   const state = app.state;
   if (!state) return;
@@ -238,7 +312,7 @@ async function poll() {
   } catch (error) {
     $("message").textContent = `控制台连接中断：${error.message}`;
   }
-  window.setTimeout(poll, 180);
+  window.setTimeout(poll, 500);
 }
 
 $("commandForm").addEventListener("submit", async (event) => {
@@ -266,20 +340,16 @@ $("cancelButton").addEventListener("click", async () => {
 });
 
 async function initialize() {
-  [app.config, app.mapData] = await Promise.all([
+  [app.config, app.mapData, app.state] = await Promise.all([
     request("/api/config"),
     request("/api/map-data"),
+    request("/api/state"),
   ]);
   $("sourceBadge").textContent = app.config.map.source_label;
   $("mapTruth").textContent = app.mapData.truth_boundary || "FORMAL MAP BUNDLE";
-  await Promise.all(app.config.layers.map(async (layer) => {
-    const image = new Image();
-    image.src = `${layer.asset}?bundle=${Date.now()}`;
-    app.layerImages[layer.id] = image;
-    await image.decode();
-  }));
+  renderRecognition();
   $("placeChips").innerHTML = app.config.places
-    .map((place) => `<button type="button" data-id="${place.id}">${place.name}</button>`)
+    .map((place) => `<button type="button" data-id="${escapeHtml(place.id)}">${escapeHtml(place.name)}</button>`)
     .join("");
   $("placeChips").querySelectorAll("button").forEach((button) => {
     button.onclick = () => {
@@ -289,11 +359,30 @@ async function initialize() {
   });
   for (const layer of app.config.layers) {
     const status = $(`${layer.id}Status`);
-    status.textContent = layer.status === "formal" ? "FORMAL" : "BOOTSTRAP";
-    status.className = `layer-status ${layer.status}`;
+    status.textContent = "LOADING";
+    status.className = "layer-status loading";
     $(`${layer.id}Description`).textContent = layer.description;
   }
-  await poll();
+  render();
+  drawMaps();
+
+  app.config.layers.forEach((layer) => {
+    const image = new Image();
+    app.layerImages[layer.id] = image;
+    image.onload = () => {
+      const status = $(`${layer.id}Status`);
+      status.textContent = layer.status === "formal" ? "FORMAL" : "BOOTSTRAP";
+      status.className = `layer-status ${layer.status}`;
+      drawMaps();
+    };
+    image.onerror = () => {
+      const status = $(`${layer.id}Status`);
+      status.textContent = "ERROR";
+      status.className = "layer-status error";
+    };
+    image.src = layer.asset;
+  });
+  window.setTimeout(poll, 500);
 }
 
 initialize().catch((error) => {

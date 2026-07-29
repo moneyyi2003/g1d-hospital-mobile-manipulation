@@ -5,6 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from family_home_vln.formal_mapping import PROMPT_BY_PLACE
 from family_home_vln.layout import PLACES
 from scripts.serve_family_home_dashboard import FamilyHomeDashboardSession
 
@@ -40,6 +41,10 @@ class FamilyHomeDashboardSessionTest(unittest.TestCase):
                 "id": place.place_id,
                 "name": place.name,
                 "aliases": list(place.aliases),
+                "target": {
+                    "type": "semantic_instance",
+                    "source_id": PROMPT_BY_PLACE[place.place_id],
+                },
                 "status": "approved",
                 "entrance_pose": pose,
                 "docking_candidates": [{"id": "scan", "pose": pose}],
@@ -51,6 +56,55 @@ class FamilyHomeDashboardSessionTest(unittest.TestCase):
                 "map": {"sha256": digest.hexdigest()},
                 "places": places,
             }, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        survey_manifest = artifacts / "survey/capture_manifest.json"
+        survey_manifest.parent.mkdir(parents=True)
+        survey_manifest.write_text(
+            json.dumps({
+                "schema_version": 1,
+                "rgb_is_only_model_input": True,
+                "camera": {"resolution": [640, 360]},
+                "frames": [{"frame": 0}, {"frame": 1}],
+            }),
+            encoding="utf-8",
+        )
+        sam3_manifest = artifacts / "sam3/sam3_manifest.json"
+        sam3_manifest.parent.mkdir(parents=True)
+        sam3_manifest.write_text(
+            json.dumps({
+                "schema_version": 1,
+                "prompts": [
+                    {
+                        "prompt": prompt,
+                        "detections": 3 if prompt == "sofa" else 0,
+                    }
+                    for prompt in PROMPT_BY_PLACE.values()
+                ],
+            }),
+            encoding="utf-8",
+        )
+        observations = artifacts / "semantic/sam3_observations.json"
+        observations.parent.mkdir(parents=True)
+        observations.write_text(
+            json.dumps({
+                "schema_version": 1,
+                "frame_id": "map",
+                "observations": [{
+                    "track_id": "sofa:0",
+                    "prompt": "sofa",
+                    "score": 0.9,
+                    "point_count": 100,
+                    "centroid_xyz": [-2.0, 0.3, 0.2],
+                }],
+            }),
+            encoding="utf-8",
+        )
+        (observations.parent / "semantic_metadata.json").write_text(
+            json.dumps({
+                "anchors": {"sofa": [-2.0, 0.3]},
+                "region_labels": {"1": "sofa"},
+            }),
             encoding="utf-8",
         )
         assets = {}
@@ -79,6 +133,11 @@ class FamilyHomeDashboardSessionTest(unittest.TestCase):
                         {"id": layer, "description": f"formal {layer}"}
                         for layer in assets
                     ],
+                },
+                "inputs": {
+                    "survey_manifest": str(survey_manifest),
+                    "sam3": str(sam3_manifest),
+                    "semantic_observations": str(observations),
                 },
             }),
             encoding="utf-8",
@@ -113,6 +172,12 @@ class FamilyHomeDashboardSessionTest(unittest.TestCase):
             self.assertEqual(config["map"]["source_status"], "formal")
             self.assertIsNone(data["truth_boundary"])
             self.assertIn("lingbot_rgb_only", data["source"])
+            recognition = config["recognition"]
+            self.assertEqual(recognition["survey"]["frame_count"], 2)
+            self.assertEqual(recognition["summary"]["recognized"], 1)
+            self.assertEqual(recognition["summary"]["not_detected"], 3)
+            self.assertEqual(recognition["objects"][0]["raw_detections"], 3)
+            self.assertEqual(recognition["objects"][0]["map_observations"], 1)
 
     def test_incomplete_four_layer_bundle_fails_closed(self):
         with tempfile.TemporaryDirectory() as directory:

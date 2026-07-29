@@ -27,6 +27,14 @@ from simple_room_vln.artifacts import load_lingbot_artifacts  # noqa: E402
 from simple_room_vln.core import path_length, resolve_place  # noqa: E402
 
 
+OBJECT_LABELS = {
+    "living_room_sofa": ("沙发", "客厅"),
+    "bedroom_bed": ("床", "卧室"),
+    "dining_area": ("餐桌", "餐区"),
+    "kitchen_counter": ("厨房操作台", "厨房"),
+}
+
+
 def _read_json(path: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
 
@@ -52,6 +60,7 @@ class FamilyHomeDashboardSession:
                 "home-survey 和 home-map。缺少：" + ", ".join(str(path) for path in missing)
             )
         self.summary = _read_json(self.summary_path)
+        self.place_catalog = _read_json(self.places_json)
         self.grid, self.places = load_lingbot_artifacts(
             self.map_yaml, self.places_json, robot_radius_m=ROBOT_RADIUS_M
         )
@@ -68,12 +77,140 @@ class FamilyHomeDashboardSession:
             raise FileNotFoundError(
                 "mapping_summary 引用的图层不存在：" + ", ".join(str(path) for path in missing_assets)
             )
+        self.map_asset_payloads = {
+            key: path.read_bytes() for key, path in self.map_assets.items()
+        }
+        self.recognition = self._build_recognition_report()
         self._places_by_id = {place.place_id: place for place in self.places}
         self._lock = threading.RLock()
         self._process: subprocess.Popen | None = None
         self._log_stream = None
         self._started_at: float | None = None
         self._last_command = ""
+
+    def _optional_json(self, path: Path | None) -> dict:
+        if path is None or not path.is_file():
+            return {}
+        try:
+            return _read_json(path)
+        except (OSError, ValueError, json.JSONDecodeError):
+            return {}
+
+    def _input_path(self, key: str, fallback: Path) -> Path:
+        raw = self.summary.get("inputs", {}).get(key)
+        return Path(raw).resolve() if raw else fallback.resolve()
+
+    def _build_recognition_report(self) -> dict:
+        survey = self._optional_json(
+            self._input_path("survey_manifest", self.artifacts / "survey/capture_manifest.json")
+        )
+        sam3 = self._optional_json(
+            self._input_path("sam3", self.artifacts / "sam3/sam3_manifest.json")
+        )
+        observations = self._optional_json(
+            self._input_path(
+                "semantic_observations",
+                self.artifacts / "semantic/sam3_observations.json",
+            )
+        )
+        semantic_metadata = self._optional_json(
+            self.artifacts / "semantic/semantic_metadata.json"
+        )
+        raw_by_prompt = {
+            str(item.get("prompt", "")).casefold(): item
+            for item in sam3.get("prompts", [])
+        }
+        evidence_by_prompt: dict[str, list[dict]] = {}
+        for item in observations.get("observations", []):
+            prompt = str(item.get("prompt", "")).casefold()
+            if (
+                float(item.get("score", 0.0)) >= 0.35
+                and int(item.get("point_count", 0)) >= 30
+            ):
+                evidence_by_prompt.setdefault(prompt, []).append(item)
+
+        objects = []
+        scenes = []
+        for place in self.place_catalog.get("places", []):
+            place_id = str(place.get("id", ""))
+            prompt = str(place.get("target", {}).get("source_id", "")).strip()
+            prompt_key = prompt.casefold()
+            raw = raw_by_prompt.get(prompt_key, {})
+            evidence = evidence_by_prompt.get(prompt_key, [])
+            metadata = place.get("metadata", {})
+            anchor = metadata.get("semantic_anchor_xy")
+            if anchor is None:
+                anchor = semantic_metadata.get("anchors", {}).get(prompt)
+            approved = place.get("status") == "approved"
+            recognized = bool(evidence)
+            object_name, scene_name = OBJECT_LABELS.get(
+                place_id, (place.get("name", prompt), "未分类区域")
+            )
+            scores = [float(item.get("score", 0.0)) for item in evidence]
+            objects.append(
+                {
+                    "id": place_id,
+                    "name": object_name,
+                    "prompt": prompt,
+                    "recognized": recognized,
+                    "navigable": approved,
+                    "status": (
+                        "approved"
+                        if approved
+                        else "recognized_not_approved"
+                        if recognized
+                        else "not_detected"
+                    ),
+                    "raw_detections": int(raw.get("detections", 0)),
+                    "map_observations": len(evidence),
+                    "track_count": len(
+                        {str(item.get("track_id", "")) for item in evidence}
+                    ),
+                    "mean_score": sum(scores) / len(scores) if scores else None,
+                    "anchor_xy": anchor,
+                    "region_id": metadata.get("region_id"),
+                    "review_reason": (
+                        ""
+                        if recognized
+                        else "没有获得可用的 SAM3 map-frame 证据，保持不可导航"
+                    ),
+                }
+            )
+            scenes.append(
+                {
+                    "id": place_id,
+                    "name": scene_name,
+                    "status": "confirmed" if recognized else "surveyed_unconfirmed",
+                    "evidence": (
+                        f"由“{object_name}”的 {len(evidence)} 条 map-frame 证据确认"
+                        if recognized
+                        else f"巡检路径已覆盖，但“{object_name}”没有形成 map-frame 语义证据"
+                    ),
+                }
+            )
+
+        frame_count = len(survey.get("frames", []))
+        recognized_count = sum(item["recognized"] for item in objects)
+        approved_count = sum(item["navigable"] for item in objects)
+        return {
+            "source": "G1-D RGB 巡检 → LingBot RGB-only → SAM3.1 → map-frame 审核",
+            "survey": {
+                "frame_count": frame_count,
+                "resolution": survey.get("camera", {}).get("resolution"),
+                "rgb_only_model_input": survey.get("rgb_is_only_model_input"),
+            },
+            "summary": {
+                "object_categories": len(objects),
+                "recognized": recognized_count,
+                "not_detected": len(objects) - recognized_count,
+                "approved_destinations": approved_count,
+                "semantic_regions": len(
+                    semantic_metadata.get("region_labels", {})
+                ),
+            },
+            "objects": objects,
+            "scenes": scenes,
+        }
 
     def config(self) -> dict:
         map_metadata = self.summary["map"]
@@ -113,7 +250,10 @@ class FamilyHomeDashboardSession:
                     "id": public_id,
                     "label": label,
                     "status": "formal",
-                    "asset": f"/asset/map/{asset_id}.png",
+                    "asset": (
+                        f"/asset/map/{asset_id}.png"
+                        f"?v={self.map_assets[asset_id].stat().st_mtime_ns}"
+                    ),
                     "description": layer_descriptions.get(asset_id, ""),
                 }
                 for public_id, asset_id, label in layer_keys
@@ -128,6 +268,7 @@ class FamilyHomeDashboardSession:
                 }
                 for place in self.places
             ],
+            "recognition": self.recognition,
             "camera_stream": "/stream/camera.mjpg",
         }
 
@@ -335,9 +476,13 @@ class FamilyHomeHandler(BaseHTTPRequestHandler):
             return self._send_json(self.server.session.snapshot())
         if path.startswith("/asset/map/") and path.endswith(".png"):
             layer_id = Path(path).stem
-            source = self.server.session.map_assets.get(layer_id)
-            if source is not None:
-                return self._send_bytes(source.read_bytes(), "image/png")
+            body = self.server.session.map_asset_payloads.get(layer_id)
+            if body is not None:
+                return self._send_bytes(
+                    body,
+                    "image/png",
+                    cache_control="public, max-age=3600, immutable",
+                )
         if path == "/stream/camera.mjpg":
             return self._send_camera_stream()
         self.send_error(HTTPStatus.NOT_FOUND, "Resource not found")
@@ -392,11 +537,13 @@ class FamilyHomeHandler(BaseHTTPRequestHandler):
         body: bytes,
         content_type: str,
         status: HTTPStatus = HTTPStatus.OK,
+        *,
+        cache_control: str = "no-store",
     ) -> None:
         self.send_response(status)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
-        self.send_header("Cache-Control", "no-store")
+        self.send_header("Cache-Control", cache_control)
         self.send_header("X-Content-Type-Options", "nosniff")
         self.end_headers()
         self.wfile.write(body)

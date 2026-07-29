@@ -30,14 +30,14 @@
         <div class="mission-copy">
           <span class="section-index">MISSION / 01</span>
           <h2>告诉机器人要去哪里</h2>
-          <p>指令只会匹配审核地点，坐标由地点库提供。</p>
+          <p>网页立即读取已有扫描制品；只有提交任务后才启动 Isaac Sim。</p>
         </div>
         <form id="commandForm">
           <label for="commandInput">导航指令</label>
           <div class="command-row">
             <input
               id="commandInput"
-              value="我困了，请带我到卧室床边"
+              value="请带我到客厅沙发旁"
               autocomplete="off"
               aria-label="家庭导航指令"
             />
@@ -99,10 +99,46 @@
         </aside>
       </section>
 
+      <section class="recognition-section">
+        <div class="section-heading">
+          <div>
+            <span class="section-index">SCAN INTELLIGENCE / 04</span>
+            <h2>机器人扫描识别结果</h2>
+          </div>
+          <p id="recognitionSource">正在读取 G1-D 自采 RGB 的语义审核结果…</p>
+        </div>
+        <div id="recognitionSummary" class="recognition-summary" aria-live="polite"></div>
+        <div class="recognition-layout">
+          <article class="panel recognition-panel">
+            <div class="panel-head">
+              <div>
+                <span class="section-index">OBJECTS</span>
+                <h2>识别了哪些物体</h2>
+              </div>
+              <span class="panel-meta">SAM3.1 · MAP FRAME</span>
+            </div>
+            <div id="objectResults" class="result-list"></div>
+          </article>
+          <article class="panel recognition-panel">
+            <div class="panel-head">
+              <div>
+                <span class="section-index">SCENES</span>
+                <h2>理解了哪些场景</h2>
+              </div>
+              <span class="panel-meta">SEMANTIC REGION</span>
+            </div>
+            <div id="sceneResults" class="result-list"></div>
+          </article>
+        </div>
+        <p class="truth-note">
+          “巡检覆盖”不等于“识别成功”；未形成 SAM3 map-frame 证据的物体不会被开放为导航地点。
+        </p>
+      </section>
+
       <section class="map-section">
         <div class="section-heading">
           <div>
-            <span class="section-index">WORLD MODEL / 04</span>
+            <span class="section-index">WORLD MODEL / 05</span>
             <h2>环境理解图层</h2>
           </div>
           <p>所有图层使用同一 map 坐标系，路径与机器人位姿实时同步。</p>
