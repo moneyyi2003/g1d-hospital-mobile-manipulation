@@ -39,6 +39,27 @@ MobileManiBench 配置中虽有更完整的家庭资产名称，但本机缺少�
 ./mobilemanibench.sh home-survey --headless --resolution 640x360
 ```
 
+家庭实时可视化控制台：
+
+```bash
+./mobilemanibench.sh home-web --host 0.0.0.0 --port 6012
+```
+
+浏览器打开 `http://服务器地址:6012`。页面输入指令后会启动一个独立 Isaac Sim 任务，并
+同步显示：
+
+- 960 × 540 RTX 跟随相机中的 G1-D 导航过程；
+- Point Cloud：当前为 952 个碰撞几何点云代理点；
+- Semantic：家具类别和审核地点；
+- Occupancy：按 0.40 m G1-D footprint 膨胀的可通行栅格；
+- Region：卧室、客厅、餐区、厨房和通行区；
+- 同一 `map` 坐标系中的规划路径、实际轨迹、机器人朝向、速度和航点。
+
+当前四个地图层都会显示 `BOOTSTRAP`。即使目录中仅出现
+`map.yaml`、`places_formal.json` 和 `mapping_summary.json`，控制台也不会自动去掉该
+标记；只有 Point Cloud、Semantic、Occupancy 和 Region 四层正式制品分别审核并接入后
+才能切换为 `FORMAL`。
+
 Agent 只生成任务计划：
 
 ```bash
@@ -68,6 +89,10 @@ Agent 只生成任务计划：
   最终位置误差 0.119 m、航向误差 0.119 rad，成功；
 - 四个地点均通过 0.40 m footprint 安全、从起点可达和审核 catalog 约束测试；
 - 原 SimpleRoom 回归仍为 657 帧、2.733 m、0.119 m/0.119 rad，成功。
+- 家庭网页 API 实际提交卧室任务：状态按
+  `starting -> loading -> running -> succeeded` 更新，530 帧、55 个实时轨迹采样点；
+  餐桌任务为 548 帧、73 个轨迹采样点。MJPEG 可读取，卧室/餐区最终帧已目视确认能看到
+  G1-D、家庭家具和绿色规划路线。
 
 以上导航使用 `stable_assisted`，用于稳定验证语言目标、地图、规划、相机和 Agent
 高层链路。它会写轮速，同时以确定性平面位姿更新保证回归，不等于家庭场景已经通过

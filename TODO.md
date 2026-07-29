@@ -105,6 +105,11 @@ VLN → VLA；VLA 仍等待外部团队交付，不属于当前已验收能力�
   0.119 rad；Agent `--navigation-scene home` 可路由纯 VLN，物体预抓取仍 fail-closed。
 - [x] 家庭全屋 RGB 巡检成功：14 个路径点、19.285 m、3750 帧，采集 215 张
   `640x360` RGB；最终位置/航向误差 0.119 m/0.119 rad。
+- [x] 新增家庭 6012/TCP 实时网页：输入审核地点指令后启动 Isaac，同步显示 G1-D
+  960x540 跟随画面、Point Cloud、Semantic、Occupancy、Region、规划路径和实际轨迹。
+- [x] 家庭网页端到端验证卧室和餐桌任务：卧室 530 帧/55 个轨迹点，餐桌
+  548 帧/73 个轨迹点；状态、MJPEG 和最终画面均通过。所有地图层当前显式标为
+  `BOOTSTRAP`。
 
 ## 当前问题
 
@@ -144,6 +149,10 @@ VLN → VLA；VLA 仍等待外部团队交付，不属于当前已验收能力�
 - [ ] **P1：家庭场景仍是 bootstrap 地图。** RGB 巡检已经完成，但尚未运行 LingBot
   RGB-only、SAM3 语义投影、正式 occupancy 和地点人工审核；SofaTablePlant 还缺部分
   材质贴图。不得把当前几何栅格或地点标成正式语义地图。
+- [ ] **P1：家庭网页正式四层制品尚未接入。** 当前 Point Cloud 是 952 个碰撞几何
+  代理点，Semantic/Region 来自审核布局，Occupancy 来自 bootstrap grid；即使只出现
+  正式导航三件套，网页仍保持 `BOOTSTRAP`。需要分别接入并审核正式点云、语义、
+  occupancy 和 region 后才能改成 `FORMAL`。
 - [ ] **P1：家庭场景尚未做纯轮地接触验收。** 当前导航与巡检是
   `stable_assisted`；正式地图完成后，需要在家庭门洞和家具附近做
   `--wheel-physics-only` 连续三次导航、制动和姿态门槛验证。

@@ -5,6 +5,34 @@
 
 ## 2026-07-29
 
+### 家庭导航五视图实时网页
+
+- 新增 `home-web` 6012/TCP 控制台：用户输入家庭地点指令后，服务端从审核 catalog
+  解析目标、规划路径并启动独立 Isaac Sim 任务。
+- 页面同时显示 960 × 540 RTX 跟随画面、Point Cloud、Semantic、Occupancy 和 Region；
+  四个地图 canvas 使用同一 `map` 坐标系叠加规划路径、实际轨迹、地点和 G1-D 朝向。
+- 家庭 runner 增加通用 `--live-dir`、`--live-fps` 和 `--live-resolution`，原子发布
+  状态 JSON 与 MJPEG 帧；相机位置会在房间内部范围内跟随，避免墙体遮挡机器人。
+- 当前点云是 952 个碰撞几何代理点，语义、region 和 occupancy 也来自 bootstrap；
+  页面和 API 明确显示 truth boundary。仅检测到正式导航三件套时不会错误切换为
+  `FORMAL`。
+
+验证：
+
+- 家庭 dashboard/layout 轻量测试 9/9、Python 编译、shell 与 JavaScript 语法通过。
+- HTTP `/`、`/api/config`、`/api/map-data`、`/api/state` 和 MJPEG 实际读取成功。
+- 通过网页 API 提交卧室任务：530 帧成功、55 个实时轨迹点；提交餐桌任务：
+  548 帧成功、73 个实时轨迹点。
+- 960 × 540 最终帧已目视确认卧室和餐区都能看到 G1-D、家具和绿色规划路线。
+- 原 SimpleRoom 无界面回归仍以 657 帧、2.733 m、0.119 m/0.119 rad 成功。
+
+已知限制：
+
+- 当前网页地图不是 LingBot/SAM3 正式四层制品；正式家庭建图完成后仍需实现逐层资产
+  加载与审核切换。
+- 控制台直接启动本机 Isaac，适合本机、VNC、自定义 TCP 服务或 SSH 隧道，不是脱离
+  仿真后端运行的静态托管网页。
+
 ### 多区域家庭场景、G1-D RGB 巡检与 Agent 接入
 
 - 在现有约 10 m × 10 m SimpleRoom 壳体和 SofaTablePlant 基础上增加带碰撞和语义属性

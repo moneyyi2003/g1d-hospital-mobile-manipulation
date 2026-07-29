@@ -89,6 +89,13 @@ def parse_args() -> argparse.Namespace:
                         help="Record a third-person overview GIF (works in headless mode)")
     parser.add_argument("--record-fps", type=int, default=10,
                         help="Frame rate of --record-gif (default: 10)")
+    parser.add_argument(
+        "--live-dir",
+        type=Path,
+        help="Publish live state JSON and overview-camera JPEGs for a web dashboard",
+    )
+    parser.add_argument("--live-fps", type=int, default=10)
+    parser.add_argument("--live-resolution", default="960x540")
     parser.add_argument("--wheel-physics-only", action="store_true")
     parser.add_argument("--no-camera", action="store_true", help="Disable RGB sensor outside survey mode")
     parser.add_argument("--resolution", default="640x480", help="RGB WIDTHxHEIGHT")
@@ -96,6 +103,8 @@ def parse_args() -> argparse.Namespace:
 
 
 args = parse_args()
+if args.live_dir is not None and not args.live_dir.is_absolute():
+    args.live_dir = ROOT / args.live_dir
 if args.scene_profile == "family-home":
     if args.output_dir == DEFAULT_OUTPUT:
         args.output_dir = DEFAULT_HOME_OUTPUT
@@ -116,6 +125,16 @@ try:
     camera_width, camera_height = (int(item) for item in args.resolution.lower().split("x", 1))
 except (TypeError, ValueError) as exc:
     raise SystemExit("--resolution must be WIDTHxHEIGHT") from exc
+try:
+    live_width, live_height = (
+        int(item) for item in args.live_resolution.lower().split("x", 1)
+    )
+except (TypeError, ValueError) as exc:
+    raise SystemExit("--live-resolution must be WIDTHxHEIGHT") from exc
+if not 1 <= args.live_fps <= 30:
+    raise SystemExit("--live-fps must be between 1 and 30")
+if live_width <= 0 or live_height <= 0:
+    raise SystemExit("--live-resolution dimensions must be positive")
 
 for required in (ROOM_USD, ROBOT_USD, SOFA_USD):
     if not required.is_file():
@@ -149,6 +168,7 @@ from family_home_vln.layout import (
     build_bootstrap_artifacts as build_family_home_bootstrap_artifacts,
     build_survey_path as build_family_home_survey_path,
 )
+from hospital_vln.live import LivePublisher, publish_failure
 from simple_room_vln.artifacts import (
     SOFA_SET_TRANSLATION,
     build_bootstrap_artifacts,
@@ -281,17 +301,44 @@ def look_at_camera_pose(
     return eye_array.astype(np.float32), quaternion
 
 
+def home_chase_camera_pose(pose: Pose2D) -> tuple[np.ndarray, np.ndarray]:
+    """Follow G1-D from above the walls so household partitions do not occlude it."""
+
+    eye = (
+        max(-3.60, min(3.60, pose.x + 2.25)),
+        max(-2.40, min(3.85, pose.y - 2.25)),
+        ROOM_FLOOR_Z_M + 4.40,
+    )
+    target = (
+        pose.x,
+        pose.y,
+        ROOM_FLOOR_Z_M + 0.45,
+    )
+    return look_at_camera_pose(eye, target)
+
+
 def save_camera_rgb(camera, path: Path) -> bool:
-    rgba = camera.get_rgba()
-    if rgba is None or getattr(rgba, "size", 0) == 0:
+    image = camera_rgb(camera)
+    if image is None:
         return False
     from PIL import Image
 
-    image = np.asarray(rgba)[:, :, :3]
-    if image.dtype != np.uint8:
-        image = np.clip(image * (255.0 if image.max() <= 1.0 else 1.0), 0, 255).astype(np.uint8)
     Image.fromarray(image).save(path)
     return True
+
+
+def camera_rgb(camera):
+    rgba = camera.get_rgba()
+    if rgba is None or getattr(rgba, "size", 0) == 0:
+        return None
+    image = np.asarray(rgba)[:, :, :3]
+    if image.dtype != np.uint8:
+        image = np.clip(
+            image * (255.0 if image.max() <= 1.0 else 1.0),
+            0,
+            255,
+        ).astype(np.uint8)
+    return image
 
 
 def add_composed_scene(
@@ -490,6 +537,28 @@ def main() -> int:
         print(f"Resolved command {args.command!r} -> {target.place_id}")
     print(f"Planned {len(path)} waypoints, length={path_length(path):.3f} m")
 
+    start_pose = Pose2D(path[0][0], path[0][1], 0.0)
+    live = None
+    if args.live_dir is not None:
+        live = LivePublisher(
+            args.live_dir,
+            command="" if args.survey else args.command,
+            task=task_name,
+            map_source=map_source,
+            path=path,
+        )
+        live.publish_state(
+            state="loading",
+            message="正在加载家庭场景、G1-D 和 RTX 总览相机…",
+            frame=0,
+            action="loading",
+            pose=start_pose,
+            linear=0.0,
+            angular=0.0,
+            waypoint=0,
+            waypoint_count=max(0, len(path) - 1),
+        )
+
     add_composed_scene(path, None if target is None else target.pose)
     robot = WheeledRobot(
         paths=ROBOT_PRIM_PATH,
@@ -516,7 +585,7 @@ def main() -> int:
 
     overview_camera = None
     gif_frames = []
-    if args.record_gif is not None:
+    if args.record_gif is not None or (live is not None and camera is None):
         if args.record_fps <= 0 or args.record_fps > PHYSICS_HZ:
             raise ValueError("--record-fps must be between 1 and 60")
         from isaacsim.sensors.camera import Camera
@@ -531,15 +600,24 @@ def main() -> int:
             if args.scene_profile == "family-home"
             else OVERVIEW_TARGET
         )
-        overview_position, overview_orientation = look_at_camera_pose(
-            overview_eye, overview_target
+        overview_position, overview_orientation = (
+            home_chase_camera_pose(start_pose)
+            if live is not None and args.scene_profile == "family-home"
+            else look_at_camera_pose(overview_eye, overview_target)
         )
         overview_camera = Camera(
             prim_path="/World/VLNOverviewCamera",
             position=overview_position,
             orientation=overview_orientation,
-            frequency=PHYSICS_HZ,
-            resolution=(640, 480),
+            frequency=max(
+                args.record_fps if args.record_gif is not None else 1,
+                args.live_fps if live is not None else 1,
+            ),
+            resolution=(
+                (live_width, live_height)
+                if live is not None
+                else (640, 480)
+            ),
         )
 
     if not args.headless:
@@ -591,7 +669,11 @@ def main() -> int:
             else OVERVIEW_TARGET
         )
         overview_camera.set_world_pose(
-            *look_at_camera_pose(overview_eye, overview_target),
+            *(
+                home_chase_camera_pose(pose)
+                if live is not None and args.scene_profile == "family-home"
+                else look_at_camera_pose(overview_eye, overview_target)
+            ),
             camera_axes="world",
         )
         app_utils.update_app(steps=20)
@@ -602,6 +684,18 @@ def main() -> int:
         max_linear=0.42 if args.survey else 0.45,
         max_angular=1.10,
     )
+    if live is not None:
+        live.publish_state(
+            state="running",
+            message="家庭场景已就绪，机器人开始导航。",
+            frame=0,
+            action="start",
+            pose=pose,
+            linear=0.0,
+            angular=0.0,
+            waypoint=follower.index,
+            waypoint_count=max(0, len(path) - 1),
+        )
     if args.start_hold_seconds > 0:
         hold_until = time.monotonic() + args.start_hold_seconds
         while simulation_app.is_running() and time.monotonic() < hold_until:
@@ -619,19 +713,45 @@ def main() -> int:
 
         if camera is not None:
             camera.set_world_pose(*camera_world_pose(observed if args.wheel_physics_only else pose), camera_axes="world")
+        if live is not None and overview_camera is not None:
+            overview_camera.set_world_pose(
+                *home_chase_camera_pose(
+                    observed if args.wheel_physics_only else pose
+                ),
+                camera_axes="world",
+            )
         simulation_app.update()
 
-        if overview_camera is not None and frame % max(1, PHYSICS_HZ // args.record_fps) == 0:
-            rgba = overview_camera.get_rgba()
-            if rgba is not None and getattr(rgba, "size", 0):
+        current = robot_pose(robot) if args.wheel_physics_only else pose
+        live_due = live is not None and frame % max(
+            1, PHYSICS_HZ // args.live_fps
+        ) == 0
+        gif_due = (
+            args.record_gif is not None
+            and frame % max(1, PHYSICS_HZ // args.record_fps) == 0
+        )
+        if live_due:
+            live_image = camera_rgb(camera if camera is not None else overview_camera)
+            if live_image is not None:
+                live.publish_image(live_image)
+        if overview_camera is not None and gif_due:
+            image = camera_rgb(overview_camera)
+            if image is not None:
                 from PIL import Image
 
-                image = np.asarray(rgba)[:, :, :3]
-                if image.dtype != np.uint8:
-                    image = np.clip(
-                        image * (255.0 if image.max() <= 1.0 else 1.0), 0, 255
-                    ).astype(np.uint8)
                 gif_frames.append(Image.fromarray(image).copy())
+        if live_due:
+            live.publish_state(
+                state="running",
+                message=f"正在导航：{label}，航点 {follower.index}/{len(path) - 1}",
+                frame=frame,
+                action=label,
+                pose=current,
+                linear=linear,
+                angular=angular,
+                waypoint=follower.index,
+                waypoint_count=max(0, len(path) - 1),
+            )
 
         if recorder is not None:
             recorder.maybe_capture(observed if args.wheel_physics_only else pose)
@@ -727,6 +847,23 @@ def main() -> int:
         print(f"Navigation GIF: {args.record_gif} ({len(gif_frames)} frames)")
     summary_path = args.output_dir / ("survey_summary.json" if args.survey else "run_summary.json")
     summary_path.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+    if live is not None:
+        live.publish_state(
+            state="succeeded" if follower.done else "failed",
+            message=(
+                f"已到达 {task_name}，位置误差 {position_error:.3f} m。"
+                if follower.done
+                else f"任务结束但未到达目标，位置误差 {position_error:.3f} m。"
+            ),
+            frame=frame,
+            action="arrived" if follower.done else "failed",
+            pose=final_pose,
+            linear=0.0,
+            angular=0.0,
+            waypoint=follower.index,
+            waypoint_count=max(0, len(path) - 1),
+            result=result,
+        )
     print(
         f"Result: success={follower.done} position_error={position_error:.3f} m "
         f"yaw_error={yaw_error:.3f} rad"
@@ -750,6 +887,15 @@ def main() -> int:
 
 try:
     exit_code = main()
+except Exception as exc:
+    if args.live_dir is not None:
+        publish_failure(
+            args.live_dir,
+            command=args.command,
+            message=f"{type(exc).__name__}: {exc}",
+            pose=FAMILY_HOME_START,
+        )
+    raise
 finally:
     simulation_app.close()
 

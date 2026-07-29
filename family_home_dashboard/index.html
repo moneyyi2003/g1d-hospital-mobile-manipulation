@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="G1-D 家庭场景语言导航、点云、语义、占据栅格和区域实时控制台"
+    />
+    <title>G1-D Home Navigation Console</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-mark">G1</span>
+        <div>
+          <p class="eyebrow">ISAAC SIM 6.0 · FAMILY HOME · LIVE MISSION</p>
+          <h1>G1-D 家庭导航控制台</h1>
+        </div>
+      </div>
+      <div class="header-status">
+        <span id="sourceBadge" class="source-badge">MAP SOURCE</span>
+        <span id="stateBadge" class="state-badge idle"><i></i>IDLE</span>
+      </div>
+    </header>
+
+    <main>
+      <section class="mission-panel">
+        <div class="mission-copy">
+          <span class="section-index">MISSION / 01</span>
+          <h2>告诉机器人要去哪里</h2>
+          <p>指令只会匹配审核地点，坐标由地点库提供。</p>
+        </div>
+        <form id="commandForm">
+          <label for="commandInput">导航指令</label>
+          <div class="command-row">
+            <input
+              id="commandInput"
+              value="我困了，请带我到卧室床边"
+              autocomplete="off"
+              aria-label="家庭导航指令"
+            />
+            <button id="submitButton" type="submit">开始导航</button>
+            <button id="cancelButton" type="button" class="ghost">停止</button>
+          </div>
+          <div id="placeChips" class="chips" aria-label="快捷地点"></div>
+        </form>
+        <div class="mission-state">
+          <span>任务状态</span>
+          <p id="message">正在连接家庭导航服务…</p>
+          <div class="progress"><i id="progressBar"></i></div>
+        </div>
+      </section>
+
+      <section class="workspace">
+        <article class="panel camera-panel">
+          <div class="panel-head">
+            <div>
+              <span class="section-index">LIVE / 02</span>
+              <h2>Isaac Sim 导航画面</h2>
+            </div>
+              <span class="panel-meta">RTX OVERVIEW · MJPEG</span>
+          </div>
+          <div class="camera-shell">
+            <img id="cameraView" alt="Isaac Sim 家庭场景实时导航画面" />
+            <div id="cameraEmpty" class="empty-state">
+              <span class="scan-icon"></span>
+              <b>等待仿真画面</b>
+              <small>提交任务后自动启动 RTX 跟随相机</small>
+            </div>
+            <div class="camera-hud">
+              <span id="hudAction">STANDBY</span>
+              <span id="hudTiming">FRAME 0000</span>
+            </div>
+          </div>
+        </article>
+
+        <aside class="panel telemetry-panel">
+          <div class="panel-head">
+            <div>
+              <span class="section-index">ROBOT / 03</span>
+              <h2>实时遥测</h2>
+            </div>
+          </div>
+          <dl class="telemetry">
+            <div><dt>目标地点</dt><dd id="task">—</dd></div>
+            <div><dt>控制动作</dt><dd id="action">—</dd></div>
+            <div><dt>地图坐标</dt><dd id="pose">—</dd></div>
+            <div><dt>底盘速度</dt><dd id="velocity">—</dd></div>
+            <div><dt>路径航点</dt><dd id="waypoint">—</dd></div>
+            <div><dt>仿真帧 / 时间</dt><dd id="timing">—</dd></div>
+          </dl>
+          <div class="legend">
+            <span><i class="robot-dot"></i>G1-D</span>
+            <span><i class="plan-line"></i>规划路径</span>
+            <span><i class="trace-line"></i>实际轨迹</span>
+          </div>
+        </aside>
+      </section>
+
+      <section class="map-section">
+        <div class="section-heading">
+          <div>
+            <span class="section-index">WORLD MODEL / 04</span>
+            <h2>环境理解图层</h2>
+          </div>
+          <p>所有图层使用同一 map 坐标系，路径与机器人位姿实时同步。</p>
+        </div>
+        <div class="map-grid">
+          <article class="panel map-panel">
+            <div class="panel-head">
+              <div><span class="map-number">A</span><h3>Point Cloud</h3></div>
+              <span id="pointcloudStatus" class="layer-status"></span>
+            </div>
+            <div class="canvas-shell"><canvas id="pointcloudCanvas"></canvas></div>
+            <p id="pointcloudDescription" class="panel-caption"></p>
+          </article>
+          <article class="panel map-panel">
+            <div class="panel-head">
+              <div><span class="map-number">B</span><h3>Semantic</h3></div>
+              <span id="semanticStatus" class="layer-status"></span>
+            </div>
+            <div class="canvas-shell"><canvas id="semanticCanvas"></canvas></div>
+            <p id="semanticDescription" class="panel-caption"></p>
+          </article>
+          <article class="panel map-panel">
+            <div class="panel-head">
+              <div><span class="map-number">C</span><h3>Occupancy</h3></div>
+              <span id="occupancyStatus" class="layer-status"></span>
+            </div>
+            <div class="canvas-shell"><canvas id="occupancyCanvas"></canvas></div>
+            <p id="occupancyDescription" class="panel-caption"></p>
+          </article>
+          <article class="panel map-panel">
+            <div class="panel-head">
+              <div><span class="map-number">D</span><h3>Region</h3></div>
+              <span id="regionStatus" class="layer-status"></span>
+            </div>
+            <div class="canvas-shell"><canvas id="regionCanvas"></canvas></div>
+            <p id="regionDescription" class="panel-caption"></p>
+          </article>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <span>G1-D DIGITAL TWIN</span>
+      <span>TCP-ONLY · NO WEBRTC UDP REQUIRED</span>
+      <span id="mapTruth">MAP TRUTH BOUNDARY</span>
+    </footer>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

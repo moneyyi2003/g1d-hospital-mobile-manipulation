@@ -54,6 +54,8 @@ MobileManiBench、LingBot-Map 和语义地点库，构建可复现的语言导�
 - `run_g1d_hospital_vln.py`：Hospital 巡检、相机采集和导航入口。
 - `run_g1d_warehouse_vln.py`：多货架 Warehouse 场景审计、RGB 巡检和导航入口。
 - `family_home_vln/`：多区域家庭布局、碰撞家具、bootstrap occupancy、地点和巡检路径。
+- `family_home_dashboard/`、`scripts/serve_family_home_dashboard.py`：家庭指令输入、
+  Isaac MJPEG、点云/语义/occupancy/region 和实时轨迹控制台。
 - `simple_room_vln/`：地点解析、地图加载、规划及路径跟随公共逻辑。
 - `hospital_vln/`：Hospital 路径、正式地点库及相关测试。
 - `warehouse_vln/`：Warehouse bootstrap/正式制品边界、语义地点和 G1-D 轮子约定。
@@ -82,6 +84,7 @@ cd /root/autodl-tmp
 # 稍复杂家庭场景导航与 RGB 巡检
 ./mobilemanibench.sh home-vln --headless --test --no-camera
 ./mobilemanibench.sh home-survey --headless --resolution 640x360
+./mobilemanibench.sh home-web --host 0.0.0.0 --port 6012
 
 # Hospital 正式地图候诊区回归
 ./mobilemanibench.sh hospital-vln --headless --test --no-camera \
@@ -130,6 +133,9 @@ GPU 上是否已有 Isaac 进程，避免同时启动多个 Kit 实例。
   航向误差 0.119 rad；全屋巡检覆盖 14 个路径点和 19.285 m，采集 215 张
   `640x360` RGB，最终误差 0.119 m/0.119 rad。当前尚未生成正式 LingBot/SAM3 地图，
   也未做纯轮地接触验收。
+- 家庭网页：6012/TCP 控制台可从指令启动 Isaac，显示 960x540 跟随画面和
+  Point Cloud/Semantic/Occupancy/Region 四层；卧室 530 帧、55 个实时轨迹点，餐桌
+  548 帧、73 个实时轨迹点，MJPEG 和最终帧均验证。地图层当前必须保持 `BOOTSTRAP`。
 - Warehouse：完成 188 帧 G1-D RGB 巡检、LingBot RGB-only 推理、SAM3.1 语义投影、
   372 x 617 正式 occupancy 和地点审核；开放 `east_shelf_aisle`、
   `west_shelf_aisle`，`loading_zone` 因覆盖不足保持拒绝。

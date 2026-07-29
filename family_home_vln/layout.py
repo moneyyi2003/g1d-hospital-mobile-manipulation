@@ -33,6 +33,14 @@ class HomeFixture:
         return (cx - sx / 2.0, cy - sy / 2.0, cx + sx / 2.0, cy + sy / 2.0)
 
 
+@dataclass(frozen=True)
+class HomeRegion:
+    region_id: str
+    name: str
+    bounds_xy: tuple[float, float, float, float]
+    color_rgb: tuple[int, int, int]
+
+
 # These measured SimpleRoom/SofaTablePlant bounds remain part of the scene.
 BASE_OBSTACLES = (
     (-3.205, 0.985, -2.246, 2.981),  # sofa
@@ -92,6 +100,16 @@ HOME_FIXTURES = (
         (0.65, 0.95, 0.82),
         (0.30, 0.22, 0.16),
     ),
+)
+
+# Regions are a reviewed UI/semantic overlay, not an occupancy source. The
+# dining/kitchen split follows the furniture clusters on the right side.
+HOME_REGIONS = (
+    HomeRegion("bedroom", "卧室", (-4.20, -3.10, 0.72, -1.05), (95, 132, 255)),
+    HomeRegion("living_room", "客厅", (-4.20, -1.05, 0.72, 4.55), (61, 214, 157)),
+    HomeRegion("dining_area", "餐区", (0.72, 1.75, 2.90, 4.55), (247, 183, 49)),
+    HomeRegion("kitchen", "厨房", (2.90, 1.75, 4.20, 4.55), (239, 111, 108)),
+    HomeRegion("transition", "通行区", (0.72, -3.10, 4.20, 1.75), (131, 145, 161)),
 )
 
 
@@ -289,12 +307,14 @@ def build_survey_path(grid: GridMap) -> list[tuple[float, float]]:
 
 __all__ = [
     "HOME_FIXTURES",
+    "HOME_REGIONS",
     "MAP_BOUNDS",
     "PLACES",
     "ROBOT_RADIUS_M",
     "SCENE_NAME",
     "START_POSE",
     "HomeFixture",
+    "HomeRegion",
     "build_bootstrap_artifacts",
     "build_grid",
     "build_survey_path",
