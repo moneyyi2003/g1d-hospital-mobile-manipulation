@@ -45,6 +45,29 @@ case "${command_name}" in
             "${WORKSPACE_DIR}/run_g1d_simple_room_vln.py" \
             --allow-bootstrap "$@"
         ;;
+    home-vln)
+        exec "${WORKSPACE_DIR}/isaacsim/python.sh" \
+            "${WORKSPACE_DIR}/run_g1d_simple_room_vln.py" \
+            --scene-profile family-home \
+            --allow-bootstrap \
+            --output-dir "${WORKSPACE_DIR}/outputs/family_home_vln" \
+            --command "我困了，请带我到卧室床边" "$@"
+        ;;
+    home-vln-formal)
+        exec "${WORKSPACE_DIR}/isaacsim/python.sh" \
+            "${WORKSPACE_DIR}/run_g1d_simple_room_vln.py" \
+            --scene-profile family-home \
+            --output-dir "${WORKSPACE_DIR}/outputs/family_home_vln" \
+            --map "${WORKSPACE_DIR}/outputs/family_home_vln/lingbot_map/map.yaml" \
+            --places "${WORKSPACE_DIR}/outputs/family_home_vln/places_formal.json" "$@"
+        ;;
+    home-survey)
+        exec "${WORKSPACE_DIR}/isaacsim/python.sh" \
+            "${WORKSPACE_DIR}/run_g1d_simple_room_vln.py" \
+            --scene-profile family-home \
+            --survey \
+            --output-dir "${WORKSPACE_DIR}/outputs/family_home_vln" "$@"
+        ;;
     warehouse-survey)
         exec "${WORKSPACE_DIR}/isaacsim/python.sh" \
             "${WORKSPACE_DIR}/run_g1d_warehouse_vln.py" \
@@ -145,12 +168,15 @@ case "${command_name}" in
         exec "${ENV_DIR}/bin/python" "$@"
         ;;
     help|-h|--help)
-        echo "Usage: ./mobilemanibench.sh {isaacsim|smoke|g1-d-smoke|vln|simple-room-vln|warehouse-survey|warehouse-map|warehouse-vln|warehouse-vln-formal|warehouse-scene-audit|hospital-survey|hospital-map|hospital-vln|hospital-demo|hospital-web|hospital-docking|hospital-object-docking|hospital-object-web|agent|g1d-real-nav|doctor|convert-urdf|python} [args...]"
+        echo "Usage: ./mobilemanibench.sh {isaacsim|smoke|g1-d-smoke|vln|simple-room-vln|home-vln|home-vln-formal|home-survey|warehouse-survey|warehouse-map|warehouse-vln|warehouse-vln-formal|warehouse-scene-audit|hospital-survey|hospital-map|hospital-vln|hospital-demo|hospital-web|hospital-docking|hospital-object-docking|hospital-object-web|agent|g1d-real-nav|doctor|convert-urdf|python} [args...]"
         echo "  isaacsim     Launch the pinned MobileManiBench Isaac Sim GUI environment."
         echo "  smoke        Load one headless MobileManiBench G1/YCB environment."
         echo "  g1-d-smoke   Load and step the converted custom G1_D articulation."
         echo "  vln          Run the deterministic G1_D language-to-point navigation baseline."
         echo "  simple-room-vln  Navigate G1_D to a language goal in SimpleRoom (GUI by default)."
+        echo "  home-vln     Navigate G1-D in the multi-zone family-home bootstrap scene."
+        echo "  home-vln-formal Navigate with the future reviewed family-home LingBot map."
+        echo "  home-survey  Collect G1-D RGB across bedroom/living/dining/kitchen zones."
         echo "  warehouse-survey Record G1-D RGB in MobileManiBench's multi-shelf Warehouse."
         echo "  warehouse-map Build formal LingBot RGB-only, SAM3, occupancy, and place artifacts."
         echo "  warehouse-vln Navigate G1-D with the explicit collision bootstrap."

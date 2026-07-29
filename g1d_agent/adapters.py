@@ -212,6 +212,77 @@ class WarehouseVlnAdapter:
         )
 
 
+@dataclass
+class FamilyHomeVlnAdapter:
+    """Delegate household semantic navigation to the family-home runner."""
+
+    headless: bool = True
+    test: bool = True
+    no_camera: bool = True
+    workspace: Path = ROOT
+
+    def command_for(self, step: TaskStep) -> list[str]:
+        if step.kind is not StepKind.SEMANTIC_NAVIGATION:
+            raise ValueError(
+                "家庭场景当前只开放审核区域导航；物体预抓取需等待实时物体位姿和 VLA"
+            )
+        command = [
+            str(self.workspace / "mobilemanibench.sh"),
+            "home-vln",
+            "--command",
+            step.instruction,
+        ]
+        if self.headless:
+            command.append("--headless")
+        if self.test:
+            command.append("--test")
+        if self.no_camera:
+            command.append("--no-camera")
+        return command
+
+    def execute(
+        self,
+        step: TaskStep,
+        context: Mapping[str, Any] | None = None,
+    ) -> StepResult:
+        try:
+            argv = self.command_for(step)
+        except ValueError as exc:
+            return StepResult(
+                step.step_id,
+                StepStatus.BLOCKED,
+                str(exc),
+                {"agent_phase": "family_home_capability_check"},
+            )
+        completed = subprocess.run(argv, cwd=self.workspace, check=False)
+        if completed.returncode == 0:
+            return StepResult(
+                step.step_id,
+                StepStatus.SUCCEEDED,
+                "家庭场景 VLN runner 已报告到达。",
+                {
+                    "argv": argv,
+                    "returncode": completed.returncode,
+                    "handoff_artifacts": {
+                        "run_summary": str(
+                            self.workspace
+                            / "outputs/family_home_vln/run_summary.json"
+                        ),
+                        "places": str(
+                            self.workspace
+                            / "outputs/family_home_vln/places.json"
+                        ),
+                    },
+                },
+            )
+        return StepResult(
+            step.step_id,
+            StepStatus.FAILED,
+            f"家庭场景 VLN runner 失败，返回码 {completed.returncode}。",
+            {"argv": argv, "returncode": completed.returncode},
+        )
+
+
 class UnavailableVlaAdapter:
     """Explicit placeholder used until the trained VLA is delivered."""
 
@@ -305,6 +376,7 @@ class PluginVlaAdapter:
 
 
 __all__ = [
+    "FamilyHomeVlnAdapter",
     "HospitalVlnAdapter",
     "PluginVlaAdapter",
     "StepAdapter",

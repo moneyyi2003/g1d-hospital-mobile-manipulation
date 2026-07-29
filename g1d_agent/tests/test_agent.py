@@ -4,6 +4,7 @@ import unittest
 from pathlib import Path
 
 from g1d_agent.adapters import (
+    FamilyHomeVlnAdapter,
     HospitalVlnAdapter,
     PluginVlaAdapter,
     WarehouseVlnAdapter,
@@ -170,6 +171,26 @@ class HospitalVlnAdapterTest(unittest.TestCase):
         self.assertEqual(
             result.details["agent_phase"],
             "warehouse_capability_check",
+        )
+
+    def test_family_home_adapter_uses_home_runner_and_blocks_pregrasp(self) -> None:
+        adapter = FamilyHomeVlnAdapter(workspace=Path("/workspace"))
+        navigation = RuleTaskPlanner().plan(
+            "我困了，请带我到卧室床边"
+        ).steps[0]
+        docking = RuleTaskPlanner().plan(
+            "去桌边拿起红色方块"
+        ).steps[0]
+
+        self.assertEqual(
+            adapter.command_for(navigation)[:2],
+            ["/workspace/mobilemanibench.sh", "home-vln"],
+        )
+        result = adapter.execute(docking)
+        self.assertEqual(result.status, StepStatus.BLOCKED)
+        self.assertEqual(
+            result.details["agent_phase"],
+            "family_home_capability_check",
         )
 
 

@@ -1,22 +1,24 @@
 # 项目长期维护指南
 
-更新时间：2026-07-28（UTC）
+更新时间：2026-07-29（UTC）
 
 ## 项目目标
 
 本项目在 NVIDIA Isaac Sim 中加载轮式双臂 G1-D 机器人，结合
 MobileManiBench、LingBot-Map 和语义地点库，构建可复现的语言导航与移动操作流程。
-当前阶段的主成果是 SimpleRoom、Hospital 和多货架 Warehouse 场景中的中文/英文语言
-目标导航；Warehouse 已完成正式 RGB-only 建图、语义地点审核和纯轮地接触路线验收。
-后续重点是把 fail-closed ROS 2/Nav2 接口接入实体 G1-D 厂商驱动与硬急停，以及
-“导航—停靠—抓取—抬升”的移动操作闭环。
+当前阶段的主成果是 SimpleRoom、Hospital、多货架 Warehouse 和多区域家庭场景中的
+中文/英文语言目标导航；Warehouse 已完成正式 RGB-only 建图、语义地点审核和纯轮地
+接触路线验收，家庭场景已完成 bootstrap 导航与全屋 RGB 巡检。后续重点是把家庭巡检
+替换为 LingBot/SAM3 正式地图，并把 fail-closed ROS 2/Nav2 接口接入实体 G1-D 厂商
+驱动与硬急停，以及“导航—停靠—抓取—抬升”的移动操作闭环。
 
 ## 新对话恢复顺序
 
 1. 先阅读本文件和根目录 `TODO.md`。
 2. 阅读 `CHANGELOG.md` 最近一条记录，并运行 `git status --short --branch`。
 3. 根据任务类型阅读 `task.md`、`docs/HOSPITAL_SEMANTIC_NAV.md`、
-   `docs/WAREHOUSE_G1D_NAV.md` 或 `MOBILEMANIBENCH_SETUP.md`。
+   `docs/WAREHOUSE_G1D_NAV.md`、`docs/FAMILY_HOME_G1D_NAV.md` 或
+   `MOBILEMANIBENCH_SETUP.md`。
 4. 检查 `MobileManiBench` 子模块状态；该目录有独立 Git 历史。
 5. 只在确认运行时、资产和输出存在后执行耗时仿真，不要把“文件存在”当成验收成功。
 
@@ -51,6 +53,7 @@ MobileManiBench、LingBot-Map 和语义地点库，构建可复现的语言导�
 - `run_g1d_simple_room_vln.py`：SimpleRoom 语言导航仿真入口。
 - `run_g1d_hospital_vln.py`：Hospital 巡检、相机采集和导航入口。
 - `run_g1d_warehouse_vln.py`：多货架 Warehouse 场景审计、RGB 巡检和导航入口。
+- `family_home_vln/`：多区域家庭布局、碰撞家具、bootstrap occupancy、地点和巡检路径。
 - `simple_room_vln/`：地点解析、地图加载、规划及路径跟随公共逻辑。
 - `hospital_vln/`：Hospital 路径、正式地点库及相关测试。
 - `warehouse_vln/`：Warehouse bootstrap/正式制品边界、语义地点和 G1-D 轮子约定。
@@ -75,6 +78,10 @@ cd /root/autodl-tmp
 
 # SimpleRoom 确定性无界面回归
 ./mobilemanibench.sh simple-room-vln --headless --test --no-camera
+
+# 稍复杂家庭场景导航与 RGB 巡检
+./mobilemanibench.sh home-vln --headless --test --no-camera
+./mobilemanibench.sh home-survey --headless --resolution 640x360
 
 # Hospital 正式地图候诊区回归
 ./mobilemanibench.sh hospital-vln --headless --test --no-camera \
@@ -119,6 +126,10 @@ GPU 上是否已有 Isaac 进程，避免同时启动多个 Kit 实例。
   地图和正式地点库；已审核地点为 `reception`、`waiting_area`。
 - Hospital 候诊区：正式地图、`stable_assisted` 模式成功，1092 帧，
   路径 7.376 m，位置误差 0.119 m，航向误差 0.117 rad。
+- 家庭场景：卧室 bootstrap 导航成功，530 帧、路径 2.378 m、位置误差 0.120 m、
+  航向误差 0.119 rad；全屋巡检覆盖 14 个路径点和 19.285 m，采集 215 张
+  `640x360` RGB，最终误差 0.119 m/0.119 rad。当前尚未生成正式 LingBot/SAM3 地图，
+  也未做纯轮地接触验收。
 - Warehouse：完成 188 帧 G1-D RGB 巡检、LingBot RGB-only 推理、SAM3.1 语义投影、
   372 x 617 正式 occupancy 和地点审核；开放 `east_shelf_aisle`、
   `west_shelf_aisle`，`loading_zone` 因覆盖不足保持拒绝。

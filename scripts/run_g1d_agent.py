@@ -13,6 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from g1d_agent.adapters import (  # noqa: E402
+    FamilyHomeVlnAdapter,
     HospitalVlnAdapter,
     PluginVlaAdapter,
     UnavailableVlaAdapter,
@@ -46,7 +47,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--navigation-scene",
-        choices=("hospital", "warehouse"),
+        choices=("hospital", "warehouse", "home"),
         default="hospital",
         help="Select the existing scene-specific VLN adapter",
     )
@@ -153,18 +154,22 @@ def main() -> int:
         gate=VlaReadinessGate(),
         recovery=recovery,
     )
-    vln = (
-        WarehouseVlnAdapter(
+    if args.navigation_scene == "warehouse":
+        vln = WarehouseVlnAdapter(
             test=not args.no_test,
             no_camera=not args.with_camera,
         )
-        if args.navigation_scene == "warehouse"
-        else HospitalVlnAdapter(
+    elif args.navigation_scene == "home":
+        vln = FamilyHomeVlnAdapter(
+            test=not args.no_test,
+            no_camera=not args.with_camera,
+        )
+    else:
+        vln = HospitalVlnAdapter(
             test=not args.no_test,
             no_camera=not args.with_camera,
             profiles=profiles,
         )
-    )
     agent = G1DTaskAgent(
         planner=planner,
         vln=vln,

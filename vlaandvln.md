@@ -1,6 +1,6 @@
 # G1-D 的 VLN + VLA Agent 设计与接入说明
 
-更新时间：2026-07-28（UTC）
+更新时间：2026-07-29（UTC）
 
 ## 1. 目标和当前状态
 
@@ -10,10 +10,11 @@
 - VLA：在物体进入机器人可操作范围后执行观察—动作闭环；
 - VLN → VLA：先导航、精确停靠，再抓取、放置、开关或其他操作。
 
-现有 Hospital VLN 是正式语义导航基线；多货架 Warehouse 复用相同的
+现有 Hospital VLN 是正式语义导航基线；多货架 Warehouse 和多区域家庭场景复用相同的
 地图/地点/规划/路径跟随组件，并通过独立场景 adapter 接入 Agent，不会让语言模型或
-VLA 直接生成全局坐标。当前 VLA 尚未交付，因此代码提供了明确的 backend 插槽；执行到
-VLA 步骤时会返回 `blocked`，不会把“导航到物体旁边”误报为“抓取成功”。
+VLA 直接生成全局坐标。家庭场景当前完成的是 bootstrap 导航和 RGB 巡检，正式
+LingBot/SAM3 地图仍待生成。当前 VLA 尚未交付，因此代码提供了明确的 backend 插槽；
+执行到 VLA 步骤时会返回 `blocked`，不会把“导航到物体旁边”误报为“抓取成功”。
 
 这里的 G1-D 是家庭轮式双臂机器人。现阶段验收目标是先在 Isaac Sim 6.0.1 中用同构
 G1-D 数字孪生完成任务，再经过独立的 sim-to-real 安全验收接入物理机器人。仿真中的
@@ -34,8 +35,8 @@ G1DTaskAgent / RuleTaskPlanner
         +-- 远处物体操作 --> VLN 预抓取停靠 --> VLA
 
 VLN:
-HospitalVlnAdapter / WarehouseVlnAdapter
-  -> 现有 hospital-vln / hospital-object-docking / warehouse-vln
+HospitalVlnAdapter / WarehouseVlnAdapter / FamilyHomeVlnAdapter
+  -> 现有 hospital-vln / hospital-object-docking / warehouse-vln / home-vln
   -> LingBot/SAM3 语义制品 + 审核数据库
   -> DeepSeek 只选择 place_id
   -> occupancy/path/Nav2 或现有 Isaac runner
@@ -53,7 +54,7 @@ PluginVlaAdapter
 
 - `g1d_agent/router.py`：判断走 VLN、VLA 或 VLN → VLA；
 - `g1d_agent/agent.py`：按顺序执行、失败即停的任务状态机；
-- `g1d_agent/adapters.py`：Hospital/Warehouse VLN 适配器和 VLA 插件接口；
+- `g1d_agent/adapters.py`：Hospital/Warehouse/Family Home VLN 适配器和 VLA 插件接口；
 - `g1d_agent/interaction.py`：严格加载“物体 + 技能”交互配置；
 - `g1d_agent/readiness.py`：VLA 启动条件与恢复动作判定；
 - `g1d_agent/supervisor.py`：现场观测、有限恢复循环和 VLA handoff；
@@ -95,6 +96,11 @@ Agent 只决定“这个阶段需要 VLN”，然后调用以下已有入口：
   --headless --no-camera --wheel-physics-only \
   --steps 12000 --position-tolerance 0.20 --yaw-tolerance 0.20 \
   --command '请带我到东侧货架通道'
+
+# 多区域家庭场景 bootstrap 导航；正式地图生成后改用 home-vln-formal
+./mobilemanibench.sh home-vln \
+  --headless --test --no-camera \
+  --command '我困了，请带我到卧室床边'
 ```
 
 区域导航仍使用审核地点库。物体操作前必须把 SAM3/检测结果转换成带交互面朝向和安全
@@ -107,6 +113,11 @@ Warehouse 的 bootstrap 和正式 occupancy 路线都已在 `--wheel-physics-onl
 0.190 m/0.051 rad 位置/朝向误差。188 帧 G1-D RGB 巡检、LingBot RGB-only 推理、
 SAM3.1 货架语义投影和正式地点审核也已完成。证据边界见
 `docs/WAREHOUSE_G1D_NAV.md`。
+
+家庭场景由卧室、客厅、餐区和厨房组成，已完成 19.285 m G1-D RGB 巡检和 215 帧
+`640x360` 采集。当前地点和 occupancy 明确标记为 bootstrap；必须按
+`docs/FAMILY_HOME_G1D_NAV.md` 用 LingBot RGB-only、SAM3 语义投影和人工地点审核替换，
+再开放 `home-vln-formal`。
 
 ## 4. Agent 如何做决定
 
@@ -189,6 +200,10 @@ DeepSeek 仍位于现有 VLN 内部，负责把模糊地点描述约束到审核
 ./mobilemanibench.sh agent \
   --navigation-scene warehouse \
   --command '请带我到东侧货架通道'
+
+./mobilemanibench.sh agent \
+  --navigation-scene home \
+  --command '我困了，请带我到卧室床边'
 ```
 
 计划和结果写入 `outputs/g1d_agent/mission.json`。该输出不进入 Git。

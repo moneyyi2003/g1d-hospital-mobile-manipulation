@@ -1,14 +1,16 @@
 # 当前任务与交接状态
 
-更新时间：2026-07-28（UTC）
+更新时间：2026-07-29（UTC）
 
 ## 当前结论
 
 Hospital 语义导航已经通过；多货架 Warehouse 已完成 G1-D RGB 巡检、LingBot
 RGB-only 建图、SAM3.1 语义投影、正式地点审核和 occupancy 替换。东侧货架正式定向路线
-也已在 `--wheel-physics-only` 下连续三次通过。当前唯一近期主线是把 fail-closed
-ROS 2/Nav2 接口接到已确认的实体 G1-D 厂商驱动、硬急停和真实定位传感器，先做架空轮和
-隔离场低速验收；在这些外部条件到位前不得打开硬件输出。
+也已在 `--wheel-physics-only` 下连续三次通过。面向最终家庭任务的新多区域家庭场景已
+完成 G1-D bootstrap 导航和全屋 RGB 巡检。当前唯一近期仿真主线是用这批家庭 RGB
+运行 LingBot RGB-only 和 SAM3，审核地点并替换成正式 occupancy；真机主线仍是把
+fail-closed ROS 2/Nav2 接口接到已确认的实体 G1-D 厂商驱动、硬急停和真实定位传感器，
+在外部条件到位前不得打开硬件输出。
 Hospital TCP dashboard 已能在浏览器同步显示 Isaac chase camera、LingBot RGB 点云和
 occupancy map 上的实时机器人轨迹，并已接入 DeepSeek 模糊地点理解，不依赖 WebRTC
 UDP。2026-07-23 的 WebRTC 排查仍确认：当前 AutoDL 公有云实例没有浏览器可达的
@@ -97,6 +99,12 @@ VLN → VLA；VLA 仍等待外部团队交付，不属于当前已验收能力�
 - [x] 新增物理 G1-D ROS 2/Nav2 bringup：`map -> odom -> AGV_link`、轮编码器里程计、
   `/scan` 障碍层、制动/锁存急停/硬急停心跳、driver/feedback watchdog 和诊断；默认
   硬件输出关闭且 arm 必定失败，零输出消息级联调通过。
+- [x] 新增多区域家庭场景：复用 SimpleRoom 壳体和 SofaTablePlant，增加带碰撞的卧室、
+  客厅、餐区、厨房隔墙与家具；四个审核 bootstrap 地点均 footprint-safe 且可达。
+- [x] 家庭卧室指令真实 Isaac 导航成功：530 帧、2.378 m、位置误差 0.120 m、航向误差
+  0.119 rad；Agent `--navigation-scene home` 可路由纯 VLN，物体预抓取仍 fail-closed。
+- [x] 家庭全屋 RGB 巡检成功：14 个路径点、19.285 m、3750 帧，采集 215 张
+  `640x360` RGB；最终位置/航向误差 0.119 m/0.119 rad。
 
 ## 当前问题
 
@@ -133,6 +141,12 @@ VLN → VLA；VLA 仍等待外部团队交付，不属于当前已验收能力�
 - [ ] **P1：MobileManiBench 官方 G1/YCB smoke 仍缺完整资产。**
   2026-07-28 `./mobilemanibench.sh doctor` 为 12/15；项目 G1-D 和已有房间资产可用，
   但官方 G1/YCB/完整 `Assets.zip` 检查未通过，不能执行官方 reset/step 验收。
+- [ ] **P1：家庭场景仍是 bootstrap 地图。** RGB 巡检已经完成，但尚未运行 LingBot
+  RGB-only、SAM3 语义投影、正式 occupancy 和地点人工审核；SofaTablePlant 还缺部分
+  材质贴图。不得把当前几何栅格或地点标成正式语义地图。
+- [ ] **P1：家庭场景尚未做纯轮地接触验收。** 当前导航与巡检是
+  `stable_assisted`；正式地图完成后，需要在家庭门洞和家具附近做
+  `--wheel-physics-only` 连续三次导航、制动和姿态门槛验证。
 - [ ] **P1：Warehouse 装卸区仍未开放。** 当前 RGB 巡检和正式 occupancy 足以审核
   东/西货架通道，但 `(4,-10)` 周围 0.75 m 内没有 footprint-safe free cell；必须扩展
   RGB 巡检覆盖并重新建图、审核，不能手工把该地点改成 approved。
@@ -140,6 +154,15 @@ VLN → VLA；VLA 仍等待外部团队交付，不属于当前已验收能力�
   存储，而不是提交 GIF、点云、地图和模型。
 
 ## 下一步执行计划
+
+### 0. 家庭场景正式 RGB-only 地图（唯一近期仿真下一步）
+
+- 对 `outputs/family_home_vln/survey/rgb/` 的 215 张图运行 LingBot-Map；模型输入只允许
+  RGB，Isaac pose 只在推理后用于米制对齐。
+- 用 SAM3 对床、沙发、餐桌、厨房操作台和门洞做投影，生成正式 occupancy。
+- 审核四个家庭地点的 docking pose、clearance、定向 approach、可达性和地图哈希；
+  只有通过审核的地点才进入 `places_formal.json`。
+- 用 `home-vln-formal` 做语言导航，再以 `--wheel-physics-only` 连续三次验证家庭路线。
 
 ### 0. Hospital 三视图演示使用方式
 
@@ -176,7 +199,7 @@ VLN → VLA；VLA 仍等待外部团队交付，不属于当前已验收能力�
 
 ### 2. 实体 G1-D 驱动与安全验收
 
-- **唯一近期下一步：**取得并确认 G1-D 厂商底盘驱动接口，在硬件输出保持关闭时把真实
+- **唯一近期真机下一步：**取得并确认 G1-D 厂商底盘驱动接口，在硬件输出保持关闭时把真实
   `/joint_states`、driver-ready、硬急停释放心跳和 `/scan` 接到现有 bridge/Nav2，
   核对单位、左右轮符号、时间戳和 TF。
 - 先验证实体硬急停能独立切断驱动力，再做架空轮方向/编码器/制动优先级测试。

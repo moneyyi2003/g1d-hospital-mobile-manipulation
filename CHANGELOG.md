@@ -3,6 +3,38 @@
 本文件记录能够影响复现、行为、接口或任务状态的重要变更。日期使用 UTC；生成物刷新和
 无行为影响的小改动不单独记录。
 
+## 2026-07-29
+
+### 多区域家庭场景、G1-D RGB 巡检与 Agent 接入
+
+- 在现有约 10 m × 10 m SimpleRoom 壳体和 SofaTablePlant 基础上增加带碰撞和语义属性
+  的床、隔墙、餐桌、厨房操作台和电视柜，形成卧室、客厅、餐区和厨房四个家庭区域。
+- 新增 `family_home_vln/`，提供 0.40 m G1-D footprint 的显式 bootstrap occupancy、
+  四个约束地点和覆盖全屋的巡检路线；bootstrap 制品明确要求后续用 LingBot 正式地图
+  替换。
+- `run_g1d_simple_room_vln.py` 增加 `family-home` scene profile；统一入口增加
+  `home-vln`、`home-survey` 和 fail-closed 的 `home-vln-formal`。
+- Agent 增加 `FamilyHomeVlnAdapter` 和 `--navigation-scene home`；当前只允许家庭区域
+  语义导航，物体预抓取和 VLA 未实现时明确阻塞。
+- 新增 `docs/FAMILY_HOME_G1D_NAV.md`，记录场景、命令、正式 RGB-only 地图替换流程、
+  VLA 接管边界和实体 G1-D 安全边界；同步更新 `vlaandvln.md`。
+
+验证：
+
+- 家庭布局测试 5/5、Agent 测试 28/28、Python 编译和 shell 语法通过。
+- 主 Isaac Sim 6.0.1 中卧室导航成功：530 帧、2.378 m、位置误差 0.120 m、航向误差
+  0.119 rad。
+- 全屋 RGB 巡检成功：3750 帧、19.285 m、215 张 `640x360` RGB，最终位置误差
+  0.119 m、航向误差 0.119 rad。
+- 原 SimpleRoom 真实 Isaac 回归仍成功：657 帧、2.733 m、0.119 m/0.119 rad。
+
+已知限制：
+
+- 家庭 occupancy 和地点仍是 bootstrap；尚未完成 LingBot RGB-only、SAM3 正式语义
+  投影、地点审核和纯轮地接触验收。
+- SofaTablePlant 的部分相对纹理资产缺失，几何与碰撞可用但视觉材质不完整。
+- 本次只驱动 Isaac 中的 G1-D 数字孪生，没有驱动物理机器人；实体硬件输出继续默认关闭。
+
 ## 2026-07-28
 
 ### Warehouse 正式 RGB-only 地图、纯轮路线与实体 G1-D ROS 2/Nav2 接口

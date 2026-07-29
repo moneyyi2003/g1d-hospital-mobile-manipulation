@@ -34,6 +34,9 @@ SOFA_USD = ROOT / "Assets/room/GenieSim/scenes/iros/SofaTablePlant.usd"
 DEFAULT_OUTPUT = ROOT / "outputs/simple_room_vln"
 DEFAULT_LINGBOT_MAP = DEFAULT_OUTPUT / "lingbot_map/map.yaml"
 DEFAULT_FORMAL_PLACES = DEFAULT_OUTPUT / "places_formal.json"
+DEFAULT_HOME_OUTPUT = ROOT / "outputs/family_home_vln"
+DEFAULT_HOME_LINGBOT_MAP = DEFAULT_HOME_OUTPUT / "lingbot_map/map.yaml"
+DEFAULT_HOME_FORMAL_PLACES = DEFAULT_HOME_OUTPUT / "places_formal.json"
 
 ROBOT_PRIM_PATH = "/World/G1_D"
 LEFT_WHEEL_JOINT = "Left_Wheel_Joint"
@@ -52,10 +55,18 @@ CAMERA_FOCAL_LENGTH_MM = 16.0
 CAMERA_HORIZONTAL_APERTURE_MM = 28.0
 OVERVIEW_EYE = (3.25, -2.60, 1.75)
 OVERVIEW_TARGET = (-1.25, 0.25, -0.20)
+HOME_OVERVIEW_EYE = (6.25, -6.00, 6.20)
+HOME_OVERVIEW_TARGET = (0.0, 0.70, -0.20)
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--scene-profile",
+        choices=("simple-room", "family-home"),
+        default="simple-room",
+        help="Use the original single room or the multi-zone family-home layout",
+    )
     parser.add_argument("--headless", action="store_true")
     parser.add_argument("--test", action="store_true", help="Headless end-to-end assertion")
     parser.add_argument("--survey", action="store_true", help="Collect a LingBot-ready RGB survey")
@@ -85,6 +96,13 @@ def parse_args() -> argparse.Namespace:
 
 
 args = parse_args()
+if args.scene_profile == "family-home":
+    if args.output_dir == DEFAULT_OUTPUT:
+        args.output_dir = DEFAULT_HOME_OUTPUT
+    if args.map == DEFAULT_LINGBOT_MAP:
+        args.map = DEFAULT_HOME_LINGBOT_MAP
+    if args.places == DEFAULT_FORMAL_PLACES:
+        args.places = DEFAULT_HOME_FORMAL_PLACES
 if args.test:
     args.headless = True
     if args.steps <= 0:
@@ -122,8 +140,15 @@ import numpy as np
 from isaacsim.core.rendering_manager import ViewportManager
 from isaacsim.core.simulation_manager import SimulationManager
 from isaacsim.robot.experimental.wheeled_robots.robots import WheeledRobot
-from pxr import Gf, UsdGeom, UsdLux
+from pxr import Gf, Sdf, UsdGeom, UsdLux, UsdPhysics
 
+from family_home_vln.layout import (
+    HOME_FIXTURES,
+    SCENE_NAME as FAMILY_HOME_SCENE_NAME,
+    START_POSE as FAMILY_HOME_START,
+    build_bootstrap_artifacts as build_family_home_bootstrap_artifacts,
+    build_survey_path as build_family_home_survey_path,
+)
 from simple_room_vln.artifacts import (
     SOFA_SET_TRANSLATION,
     build_bootstrap_artifacts,
@@ -283,6 +308,33 @@ def add_composed_scene(
     light.CreateColorAttr(Gf.Vec3f(0.92, 0.95, 1.0))
     sofa = stage.GetPrimAtPath("/World/SofaSet")
     UsdGeom.Xformable(sofa).AddTranslateOp().Set(Gf.Vec3d(*SOFA_SET_TRANSLATION))
+    if args.scene_profile == "family-home":
+        fixtures_root = UsdGeom.Xform.Define(stage, "/World/FamilyHome")
+        fixtures_root.GetPrim().CreateAttribute(
+            "scene:profile",
+            Sdf.ValueTypeNames.String,
+        ).Set("family-home")
+        for fixture in HOME_FIXTURES:
+            cube = UsdGeom.Cube.Define(
+                stage,
+                f"/World/FamilyHome/{fixture.fixture_id}",
+            )
+            cube.CreateSizeAttr(1.0)
+            cube.CreateDisplayColorAttr([Gf.Vec3f(*fixture.color_rgb)])
+            transform = UsdGeom.Xformable(cube)
+            transform.AddTranslateOp().Set(
+                Gf.Vec3d(
+                    fixture.center_xy[0],
+                    fixture.center_xy[1],
+                    ROOM_FLOOR_Z_M + fixture.size_xyz[2] / 2.0,
+                )
+            )
+            transform.AddScaleOp().Set(Gf.Vec3f(*fixture.size_xyz))
+            UsdPhysics.CollisionAPI.Apply(cube.GetPrim())
+            cube.GetPrim().CreateAttribute(
+                "semantic:category",
+                Sdf.ValueTypeNames.String,
+            ).Set(fixture.category)
     if target is not None:
         marker = UsdGeom.Cylinder.Define(stage, "/World/VLN/Goal")
         marker.CreateAxisAttr("Z")
@@ -303,7 +355,7 @@ def add_composed_scene(
     route.CreateDisplayColorAttr([Gf.Vec3f(0.1, 0.9, 0.2)])
 
 
-def build_survey_path(grid) -> list[tuple[float, float]]:
+def build_simple_survey_path(grid) -> list[tuple[float, float]]:
     waypoints = [
         (0.0, 0.0),
         (0.0, -2.20),
@@ -366,7 +418,11 @@ class SurveyRecorder:
     def finish(self) -> Path:
         manifest = {
             "schema_version": 1,
-            "scene": "SimpleRoom+SofaTablePlant",
+            "scene": (
+                FAMILY_HOME_SCENE_NAME
+                if args.scene_profile == "family-home"
+                else "SimpleRoom+SofaTablePlant"
+            ),
             "rgb_is_only_model_input": True,
             "pose_consumer": "offline_metric_alignment_and_evaluation_only",
             "camera": {
@@ -388,8 +444,12 @@ class SurveyRecorder:
 def main() -> int:
     args.output_dir.mkdir(parents=True, exist_ok=True)
     if args.survey or args.test or args.allow_bootstrap:
-        grid, places = build_bootstrap_artifacts(args.output_dir)
-        map_source = "isaac_geometry_bootstrap"
+        if args.scene_profile == "family-home":
+            grid, places = build_family_home_bootstrap_artifacts(args.output_dir)
+            map_source = "reviewed_procedural_family_home_bootstrap"
+        else:
+            grid, places = build_bootstrap_artifacts(args.output_dir)
+            map_source = "isaac_geometry_bootstrap"
     else:
         missing = [str(path) for path in (args.map, args.places) if not path.is_file()]
         if missing:
@@ -406,12 +466,21 @@ def main() -> int:
         )
     if args.survey:
         target = None
-        path = build_survey_path(grid)
+        path = (
+            build_family_home_survey_path(grid)
+            if args.scene_profile == "family-home"
+            else build_simple_survey_path(grid)
+        )
         final_yaw = 0.0
         task_name = "rgb_survey"
     else:
         target = resolve_place(args.command, places)
-        path = grid.plan((0.0, 0.0), (target.pose.x, target.pose.y))
+        start = (
+            FAMILY_HOME_START
+            if args.scene_profile == "family-home"
+            else Pose2D(0.0, 0.0, 0.0)
+        )
+        path = grid.plan((start.x, start.y), (target.pose.x, target.pose.y))
         final_yaw = target.pose.yaw
         task_name = target.place_id
 
@@ -426,7 +495,7 @@ def main() -> int:
         paths=ROBOT_PRIM_PATH,
         wheel_dof_names=[LEFT_WHEEL_JOINT, RIGHT_WHEEL_JOINT],
         usd_path=str(ROBOT_USD).replace("\\", "/"),
-        positions=[0.0, 0.0, ROOM_FLOOR_Z_M + 0.12],
+        positions=[path[0][0], path[0][1], ROOM_FLOOR_Z_M + 0.12],
     )
 
     camera = None
@@ -434,7 +503,9 @@ def main() -> int:
     if not args.no_camera:
         from isaacsim.sensors.camera import Camera
 
-        camera_position, camera_orientation = camera_world_pose(Pose2D(0.0, 0.0, 0.0))
+        camera_position, camera_orientation = camera_world_pose(
+            Pose2D(path[0][0], path[0][1], 0.0)
+        )
         camera = Camera(
             prim_path="/World/G1DRgbCamera",
             position=camera_position,
@@ -450,8 +521,18 @@ def main() -> int:
             raise ValueError("--record-fps must be between 1 and 60")
         from isaacsim.sensors.camera import Camera
 
+        overview_eye = (
+            HOME_OVERVIEW_EYE
+            if args.scene_profile == "family-home"
+            else OVERVIEW_EYE
+        )
+        overview_target = (
+            HOME_OVERVIEW_TARGET
+            if args.scene_profile == "family-home"
+            else OVERVIEW_TARGET
+        )
         overview_position, overview_orientation = look_at_camera_pose(
-            OVERVIEW_EYE, OVERVIEW_TARGET
+            overview_eye, overview_target
         )
         overview_camera = Camera(
             prim_path="/World/VLNOverviewCamera",
@@ -464,8 +545,16 @@ def main() -> int:
     if not args.headless:
         ViewportManager.set_camera_view(
             "/OmniverseKit_Persp",
-            eye=[1.5, -1.5, 1.8],
-            target=[-1.8, 1.4, 0.2],
+            eye=(
+                [5.5, -5.0, 5.5]
+                if args.scene_profile == "family-home"
+                else [1.5, -1.5, 1.8]
+            ),
+            target=(
+                [0.0, 0.7, 0.0]
+                if args.scene_profile == "family-home"
+                else [-1.8, 1.4, 0.2]
+            ),
         )
 
     SimulationManager.setup_simulation(dt=1.0 / PHYSICS_HZ, device="cpu")
@@ -474,7 +563,7 @@ def main() -> int:
     app_utils.update_app(steps=24)
     configure_joint_drives(robot)
 
-    pose = Pose2D(0.0, 0.0, 0.0)
+    pose = Pose2D(path[0][0], path[0][1], 0.0)
     if not args.wheel_physics_only:
         set_assisted_robot_pose(robot, pose, 0.0, 0.0)
 
@@ -491,8 +580,18 @@ def main() -> int:
         overview_camera.initialize()
         overview_camera.set_focal_length(14.0)
         overview_camera.set_horizontal_aperture(28.0)
+        overview_eye = (
+            HOME_OVERVIEW_EYE
+            if args.scene_profile == "family-home"
+            else OVERVIEW_EYE
+        )
+        overview_target = (
+            HOME_OVERVIEW_TARGET
+            if args.scene_profile == "family-home"
+            else OVERVIEW_TARGET
+        )
         overview_camera.set_world_pose(
-            *look_at_camera_pose(OVERVIEW_EYE, OVERVIEW_TARGET),
+            *look_at_camera_pose(overview_eye, overview_target),
             camera_axes="world",
         )
         app_utils.update_app(steps=20)
@@ -592,6 +691,12 @@ def main() -> int:
             print(f"Arrival RGB: {arrival_image}")
 
     result = {
+        "scene_profile": args.scene_profile,
+        "scene": (
+            FAMILY_HOME_SCENE_NAME
+            if args.scene_profile == "family-home"
+            else "SimpleRoom+SofaTablePlant"
+        ),
         "task": task_name,
         "command": None if args.survey else args.command,
         "map_source": map_source,
@@ -636,7 +741,10 @@ def main() -> int:
         if position_error > 0.20:
             print("TEST FAILED: final position error is too large", file=sys.stderr)
             return 3
-        print("TEST PASSED: G1-D reached the reviewed sofa-side pose")
+        print(
+            "TEST PASSED: G1-D reached the reviewed "
+            f"{args.scene_profile} destination"
+        )
     return 0
 
 
