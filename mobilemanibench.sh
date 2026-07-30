@@ -183,7 +183,10 @@ case "${command_name}" in
         exec ros2 launch lingbot_semantic_nav_ros g1d_real_nav2.launch.py \
             map:="${WORKSPACE_DIR}/outputs/warehouse_vln/lingbot_map/map.yaml" \
             places:="${WORKSPACE_DIR}/outputs/warehouse_vln/places_formal.json" \
-            allow_hardware_output:=False "$@"
+            allow_hardware_output:=False \
+            start_unitree_driver:=True \
+            unitree_connect_sdk:=False \
+            unitree_allow_sdk_motion:=False "$@"
         ;;
     g1d-home-real-nav)
         if [[ ! -f /opt/ros/humble/setup.bash ]]; then
@@ -202,7 +205,10 @@ case "${command_name}" in
             map:="${WORKSPACE_DIR}/outputs/family_home_vln/lingbot_map/map.yaml" \
             places:="${WORKSPACE_DIR}/outputs/family_home_vln/places_formal.json" \
             initial_x:=0.0 initial_y:=0.0 initial_yaw:=0.0 \
-            allow_hardware_output:=False "$@"
+            allow_hardware_output:=False \
+            start_unitree_driver:=True \
+            unitree_connect_sdk:=False \
+            unitree_allow_sdk_motion:=False "$@"
         ;;
     hospital-map)
         if [[ ! -x "${LINGBOT_ENV_DIR}/bin/python" ]]; then

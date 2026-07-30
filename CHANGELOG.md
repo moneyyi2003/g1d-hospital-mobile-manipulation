@@ -5,6 +5,35 @@
 
 ## 2026-07-30
 
+### Unitree SDK2 G1-D 命令侧 ROS 2 接入
+
+- 确认本机 `unitree_sdk2` 为官方仓库 `21d0a3b`（`2.0.2-67`），包含 G1-D
+  `AgvClient::Move`、升降柱和双臂示例；三个 G1-D 官方示例在 Ubuntu 22.04/x86_64
+  上实际编译链接通过。
+- 新增 `unitree_g1d_driver` C++ ROS 2 包，把
+  `/g1d/hardware/cmd_vel` 转为 `AgvClient::Move(vx,0,wz)`；制动、命令超时、
+  非有限值和制动心跳超时均优先转为零速度。
+- 增加 SDK DDS 连接、SDK 非零运动和上游 `allow_hardware_output` 三重门；
+  `/g1d/hardware/driver_ready` 只有非零输出已显式允许且最近 RPC 成功时才为真。
+- 家庭/Warehouse 物理 bringup 默认启动适配节点，但 DDS 不连接、非零运动禁用；
+  SDK 官方角速度上限 `0.6 rad/s` 已同步到上游安全桥。
+
+验证：
+
+- `unitree_g1d_driver` 和 `lingbot_semantic_nav_ros` 在 ROS 2 Humble 下构建通过；
+  两包合计 10 项测试全部通过，其中新增安全核心 GTest 5/5。
+- 独立 dry-run 实测持续发布 `driver_ready=false`，状态明确报告
+  `connect_sdk=false`、零速度制动语义、轮反馈和硬急停缺失。
+- `g1d-home-real-nav` 实际拉起 Unitree 适配节点、现有安全桥和 Nav2；arm 返回
+  `hardware output is disabled by configuration`，未产生 SDK DDS 或运动输出。
+
+已知限制：
+
+- 当前 SDK 示例没有确认左右轮编码器 topic，不能生成真实 `/joint_states` 和
+  `odom -> AGV_link`；完整 bringup 因而按预期等待 odom TF。
+- SDK 的 brake 只能落实为 `Move(0,0,0)`，不是独立机械制动；实体硬急停、机器人网络
+  和真实 `/scan` 仍是启用前置条件。
+
 ### 家庭正式重建、实时对象搜索与同会话精停
 
 - 用新增家庭物品后的 215 帧 G1-D RGB 重跑 LingBot；全局 Sim(3) 仅 22/215

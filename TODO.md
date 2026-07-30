@@ -14,9 +14,9 @@ Florence-2 无类别清单自主发现：621 条原始检测经跨帧门接受 1
 地点和对象审核；正式对象目录批准 5 类搜索/停靠对象、地图形成 7 个语义 region。同一
 Isaac SimulationApp 内的 `NAVIGATE -> live SEARCH_OBJECT -> APPROACH_AND_ALIGN`
 已实测通过，随后在缺少 VLA 时正确阻塞。当前唯一近期仿真主线是改善近距离巡检以识别
-可抓取小物体并做家庭纯轮地接触回归；真机主线仍是把
-fail-closed ROS 2/Nav2 接口接到已确认的实体 G1-D 厂商驱动、硬急停和真实定位传感器，
-在外部条件到位前不得打开硬件输出。
+可抓取小物体并做家庭纯轮地接触回归；真机侧已找到官方 Unitree SDK2 G1-D AGV API，
+并完成 fail-closed ROS 2 命令适配。下一步必须在机器人旁确认网络、左右轮真实反馈
+topic、实体硬急停和 `/scan`，在这些外部条件到位前不得打开硬件输出。
 Hospital TCP dashboard 已能在浏览器同步显示 Isaac chase camera、LingBot RGB 点云和
 occupancy map 上的实时机器人轨迹，并已接入 DeepSeek 模糊地点理解，不依赖 WebRTC
 UDP。2026-07-23 的 WebRTC 排查仍确认：当前 AutoDL 公有云实例没有浏览器可达的
@@ -152,8 +152,10 @@ UDP。2026-07-23 的 WebRTC 排查仍确认：当前 AutoDL 公有云实例没�
   `potted plant` 3 帧，精停误差 0.030 m、对象距离 0.749 m、朝向误差 0.049 rad；
   最后按设计阻塞于 `VLA_UNAVAILABLE`。
 - [x] 新增 `g1d-home-real-nav`，把重建家庭 map/places 接到已有 ROS 2/Nav2、TF、
-  轮里程计、制动和急停边界；由于厂商驱动/真机网络/硬急停/真实 `/scan` 均不可用，
-  该入口继续强制硬件输出关闭。
+  轮里程计、制动和急停边界；该入口继续强制硬件输出关闭。
+- [x] 接入本机 Unitree SDK2 的 G1-D `AgvClient`：新增 C++ ROS 2 驱动，把安全
+  `/cmd_vel` 转为 `Move(vx,0,wz)`，制动优先转零速度，发布 RPC ready/status，并以
+  SDK 连接、SDK 非零运动和上游硬件输出三重门默认禁止实体输出。
 
 ## 当前问题
 
@@ -161,9 +163,10 @@ UDP。2026-07-23 的 WebRTC 排查仍确认：当前 AutoDL 公有云实例没�
   47998/UDP 映射、UDP 覆盖网络或外部 TURN relay；仅重启 Kit、设置 HTTP 代理域名或
   转发 49100/TCP 无法显示原生 Streaming 视频。三视图演示可先使用 TCP-only
   `hospital-web`；原生 WebRTC 限制详见 `docs/ISAAC_SIM_STREAMING.md`。
-- [ ] **P0：实体 G1-D 尚不能启用。** 本机没有已确认的厂商底盘驱动、机器人网络、
-  实体硬急停回路和真实 `/scan`；ROS 接口只能保持 `allow_hardware_output=False`。
-  仿真纯轮路线通过不能替代架空轮、落地低速、通信丢失制动和实体急停验收。
+- [ ] **P0：实体 G1-D 尚不能启用。** 命令侧 Unitree SDK2 适配已完成，但尚未连接
+  机器人网络，SDK 中也没有已确认的左右轮编码器、独立机械制动和硬急停接口；真实
+  `/scan` 仍缺失。三个输出门只能保持关闭。仿真纯轮路线通过不能替代架空轮、落地
+  低速、通信丢失制动和实体急停验收。
 - [ ] **P0：两套 Isaac 依赖链并存。** 主 standalone 是 6.0.1/Python 3.12，
   MobileManiBench 环境仍是 Python 3.10/PyTorch 2.5.1+cu121 的早期兼容链；运行命令必须
   明确选择，后续需决定是否统一迁移。
@@ -249,11 +252,14 @@ UDP。2026-07-23 的 WebRTC 排查仍确认：当前 AutoDL 公有云实例没�
 - 用 `docs/ISAAC_SIM_STREAMING.md` 中的显式 `publicIp` 命令重启。
 - 验收浏览器 `Stream Ready`、ETLI candidate pair 和实际 UDP 流量。
 
-### 2. 实体 G1-D 驱动与安全验收
+### 2. 实体 G1-D SDK、反馈与安全验收
 
-- **唯一近期真机下一步：**取得并确认 G1-D 厂商底盘驱动接口，在硬件输出保持关闭时把真实
-  `/joint_states`、driver-ready、硬急停释放心跳和 `/scan` 接到现有 bridge/Nav2，
-  核对单位、左右轮符号、时间戳和 TF。
+- [x] 用 Unitree SDK2 `g1::AgvClient` 完成 ROS 2 命令适配、零速度优先、RPC ready
+  心跳和默认三重输出门。
+- **唯一近期真机下一步：**在机器人旁连接实际网卡，只发零速度确认 SDK RPC；用厂商
+  文档或 DDS 实测找到左右轮真实 position/velocity topic，禁止用指令积分代替反馈。
+- 把真实 `/joint_states`、硬急停释放心跳和 `/scan` 接到现有 bridge/Nav2，核对单位、
+  左右轮符号、时间戳和 TF。
 - 先验证实体硬急停能独立切断驱动力，再做架空轮方向/编码器/制动优先级测试。
 - 落地后把最大线速度限制为 `0.10 m/s`，验证直行、原地转向、松手制动、
   0.25 s cmd 超时和 0.50 s driver/feedback/急停心跳超时。

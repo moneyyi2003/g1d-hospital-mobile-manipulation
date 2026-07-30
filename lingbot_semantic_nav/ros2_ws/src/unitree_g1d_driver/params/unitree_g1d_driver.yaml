@@ -1,0 +1,20 @@
+unitree_g1d_driver:
+  ros__parameters:
+    # All three gates must be opened independently:
+    # 1. existing g1d_base_bridge allow_hardware_output,
+    # 2. connect_sdk below,
+    # 3. allow_sdk_motion below.
+    connect_sdk: false
+    allow_sdk_motion: false
+    network_interface: ""
+    sdk_timeout_s: 0.20
+    ready_timeout_s: 0.50
+    command_rate_hz: 20.0
+    command_timeout_s: 0.25
+    brake_timeout_s: 0.25
+    max_linear_mps: 0.35
+    max_angular_radps: 0.60
+    command_topic: /g1d/hardware/cmd_vel
+    brake_topic: /g1d/hardware/brake
+    driver_ready_topic: /g1d/hardware/driver_ready
+    status_topic: /g1d/hardware/sdk_status

@@ -22,6 +22,7 @@
   <exec_depend>std_srvs</exec_depend>
   <exec_depend>tf2_ros</exec_depend>
   <exec_depend>turtlebot3_gazebo</exec_depend>
+  <exec_depend>unitree_g1d_driver</exec_depend>
 
   <test_depend>ament_flake8</test_depend>
   <test_depend>ament_pep257</test_depend>

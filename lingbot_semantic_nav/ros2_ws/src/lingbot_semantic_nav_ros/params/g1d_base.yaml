@@ -22,7 +22,8 @@ g1d_base_bridge:
     left_encoder_sign: 1.0
     right_encoder_sign: -1.0
     max_linear_mps: 0.35
-    max_angular_radps: 0.80
+    # Official G1-D AgvClient::Move limit is 0.60 rad/s.
+    max_angular_radps: 0.60
     max_linear_accel_mps2: 0.50
     max_angular_accel_radps2: 1.20
     command_timeout_s: 0.25

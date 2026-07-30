@@ -1,6 +1,6 @@
 # 项目长期维护指南
 
-更新时间：2026-07-29（UTC）
+更新时间：2026-07-30（UTC）
 
 ## 项目目标
 
@@ -8,9 +8,9 @@
 MobileManiBench、LingBot-Map 和语义地点库，构建可复现的语言导航与移动操作流程。
 当前阶段的主成果是 SimpleRoom、Hospital、多货架 Warehouse 和多区域家庭场景中的
 中文/英文语言目标导航；Warehouse 已完成正式 RGB-only 建图、语义地点审核和纯轮地
-接触路线验收，家庭场景已完成 bootstrap 导航与全屋 RGB 巡检。后续重点是把家庭巡检
-替换为 LingBot/SAM3 正式地图，并把 fail-closed ROS 2/Nav2 接口接入实体 G1-D 厂商
-驱动与硬急停，以及“导航—停靠—抓取—抬升”的移动操作闭环。
+接触路线验收；家庭场景已完成正式 LingBot/SAM3 地图、对象审核、实时搜索和精停。
+真机命令侧已接入 Unitree SDK2，后续重点是补齐实体轮反馈、硬急停和在线定位，并完成
+“导航—停靠—抓取—抬升”的移动操作闭环。
 
 ## 新对话恢复顺序
 
@@ -61,6 +61,8 @@ MobileManiBench、LingBot-Map 和语义地点库，构建可复现的语言导�
 - `warehouse_vln/`：Warehouse bootstrap/正式制品边界、语义地点和 G1-D 轮子约定。
 - `g1d_agent/`：VLN/VLA 任务路由、物体—技能交互配置、VLA 启动门控和外部 backend
   接口；没有实时观测或 VLA 时必须 fail-closed。
+- `lingbot_semantic_nav/ros2_ws/src/unitree_g1d_driver/`：Unitree SDK2 G1-D AGV 命令
+  适配、RPC ready/status 和二次看门狗；不生成虚假轮反馈，默认不连接 DDS。
 - `scripts/build_hospital_map.py`：LingBot 推理结果对齐、地图和预览构建。
 - `mobilemanibench.sh`：统一命令入口。
 - `MobileManiBench/`：上游仓库子模块，包含本项目增加的 G1-D smoke、VLN 和 doctor
@@ -106,7 +108,11 @@ cd /root/autodl-tmp
 # 实体 G1-D ROS 2/Nav2（默认禁止硬件输出）
 cd /root/autodl-tmp/lingbot_semantic_nav/ros2_ws
 source /opt/ros/humble/setup.bash
-colcon build --symlink-install --packages-select lingbot_semantic_nav_ros
+colcon build --symlink-install \
+  --packages-select unitree_g1d_driver lingbot_semantic_nav_ros \
+  --cmake-args \
+  -DUNITREE_SDK2_ROOT=/root/autodl-tmp/unitree_sdk2 \
+  -DPython3_EXECUTABLE=/usr/bin/python3
 cd /root/autodl-tmp
 ./mobilemanibench.sh g1d-real-nav
 
@@ -142,8 +148,9 @@ GPU 上是否已有 Isaac 进程，避免同时启动多个 Kit 实例。
 - Warehouse 东侧货架正式定向路线：`--wheel-physics-only` 连续三次成功；每次
   10,306 帧，规划 32.538 m、物理路程 32.516 m，位置误差 0.190 m，航向误差
   0.051 rad，最大 roll/pitch 0.026/0.147 rad，2 秒制动漂移 0.0086 m。
-- 物理 G1-D ROS 2/Nav2 接口已完成本机 fail-closed 联调；实体机器人尚未接入厂商驱动、
-  网络、硬急停回路和真实 `/scan`，不得把仿真结果表述为真机运动验收。
+- 物理 G1-D ROS 2/Nav2 已接入 Unitree SDK2 `AgvClient` 命令侧并完成本机
+  fail-closed 联调；实体机器人尚未接入网络、真实轮反馈、硬急停回路和 `/scan`，
+  不得把 SDK 编译/零输出结果或仿真结果表述为真机运动验收。
 
 以上数值来自本机 `outputs/` 中的运行摘要；输出不进 Git，重跑可能覆盖它们。
 

@@ -12,6 +12,7 @@ from launch.actions import (
     OpaqueFunction,
     SetEnvironmentVariable,
 )
+from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import EnvironmentVariable, LaunchConfiguration
 from launch_ros.actions import Node
@@ -186,6 +187,7 @@ def _validated_nodes(context):
 
 def generate_launch_description():
     package_share = get_package_share_directory("lingbot_semantic_nav_ros")
+    unitree_driver_share = get_package_share_directory("unitree_g1d_driver")
     nav2_share = get_package_share_directory("nav2_bringup")
     map_file = LaunchConfiguration("map")
     places_file = LaunchConfiguration("places")
@@ -226,6 +228,22 @@ def generate_launch_description():
                 default_value=os.path.join(nav2_share, "params", "nav2_params.yaml"),
             ),
             DeclareLaunchArgument("allow_hardware_output", default_value="False"),
+            DeclareLaunchArgument("start_unitree_driver", default_value="True"),
+            DeclareLaunchArgument("unitree_connect_sdk", default_value="False"),
+            DeclareLaunchArgument(
+                "unitree_allow_sdk_motion", default_value="False"
+            ),
+            DeclareLaunchArgument(
+                "unitree_network_interface",
+                default_value="",
+                description="Robot-facing Ethernet interface, for example eth0",
+            ),
+            DeclareLaunchArgument(
+                "unitree_driver_params",
+                default_value=os.path.join(
+                    unitree_driver_share, "params", "unitree_g1d_driver.yaml"
+                ),
+            ),
             DeclareLaunchArgument(
                 "lingbot_pythonpath",
                 default_value="/root/autodl-tmp/lingbot_semantic_nav/src",
@@ -249,6 +267,29 @@ def generate_launch_description():
                 ],
             ),
             OpaqueFunction(function=_validated_nodes),
+            Node(
+                package="unitree_g1d_driver",
+                executable="unitree_g1d_driver_node",
+                name="unitree_g1d_driver",
+                output="screen",
+                condition=IfCondition(LaunchConfiguration("start_unitree_driver")),
+                parameters=[
+                    LaunchConfiguration("unitree_driver_params"),
+                    {
+                        "connect_sdk": ParameterValue(
+                            LaunchConfiguration("unitree_connect_sdk"),
+                            value_type=bool,
+                        ),
+                        "allow_sdk_motion": ParameterValue(
+                            LaunchConfiguration("unitree_allow_sdk_motion"),
+                            value_type=bool,
+                        ),
+                        "network_interface": LaunchConfiguration(
+                            "unitree_network_interface"
+                        ),
+                    },
+                ],
+            ),
             Node(
                 package="lingbot_semantic_nav_ros",
                 executable="g1d_base_bridge",
