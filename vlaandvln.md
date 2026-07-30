@@ -1,6 +1,6 @@
 # G1-D 的 VLN + VLA Agent 设计与接入说明
 
-更新时间：2026-07-29（UTC）
+更新时间：2026-07-30（UTC）
 
 ## 1. 目标和当前状态
 
@@ -18,11 +18,79 @@ occupancy，并接入 SAM3.1、region、地点审核与网页。新版感知先�
 当前只批准 `living_room_sofa`，新增物品后的正式图正在重建。当前 VLA 尚未交付，因此代码提供了明确的 backend 插槽；
 执行到 VLA 步骤时会返回 `blocked`，不会把“导航到物体旁边”误报为“抓取成功”。
 
+2026-07-30 新增的 `g1d_dual_brain_agent/` 是推荐的 v2 框架；原
+`g1d_agent/` 作为已验证的顺序基线完整保留。v2 不是让两个模型联合训练，而是：
+
+- VLN 和 VLA 模型/控制解耦；
+- 同一时刻只有一个技能持有底盘、右臂或右手控制租约；
+- 两边共享对象级世界记忆、任务进度、携带状态、失败原因和执行结果；
+- Agent 根据事件动态选择导航、搜索、对齐、操作或验证，而不是生成一次固定两步计划。
+
 这里的 G1-D 是家庭轮式双臂机器人。现阶段验收目标是先在 Isaac Sim 6.0.1 中用同构
 G1-D 数字孪生完成任务，再经过独立的 sim-to-real 安全验收接入物理机器人。仿真中的
 机器人模型运动不等于物理真机已经执行。
 
-## 2. 系统结构
+## 2. 推荐的 v2 双脑协同结构
+
+```text
+用户指令 / Mission JSON
+          |
+          v
+DualBrainExecutive
+  任务进度、动态路由、有界恢复、控制权仲裁
+          |
+          +---- SharedWorldMemory
+          |     对象 ID/位姿/房间/支撑面/可见性/可达性/携带关系/执行结果
+          |
+          +---- NAVIGATE ------------> 现有 VLN / 审核地点 / 正式 occupancy
+          +---- SEARCH_OBJECT --------> 实时 RGB + SAM3/对象跟踪
+          +---- APPROACH_AND_ALIGN ---> 可达底盘位姿、视角、IK、碰撞、制动
+          +---- MANIPULATE -----------> 外部 VLA / G1-D 右臂和多指手
+          +---- VERIFY ---------------> 独立物理成功判据
+```
+
+Agent 的构建分成六层：
+
+1. `models.py` 定义版本化任务目标、五种技能、状态和结构化失败码。
+2. `memory.py` 保存对象级世界状态和可续跑 blackboard，采用原子 JSON 落盘。
+3. `control.py` 为 `base/right_arm/right_hand` 提供互斥、带 generation 的控制租约，
+   并提供急停锁存；因此 VLN 和 VLA 不会同时争夺底盘。
+4. `skills.py` 定义统一执行接口和缺失能力的 fail-closed 占位。
+5. `legacy.py` 把 v2 的导航/停靠/操作请求转成现有 `g1d_agent` adapter 调用，保证
+   家庭 VLN 仍走 `home-vln-formal`，不替换既有 LingBot/SAM3/审核地图链。
+6. `executive.py` 每个技能结束后重新读取任务进度和对象记忆，再选择下一项技能。
+
+动态组合步骤如下：
+
+```text
+未到审核区域                     -> NAVIGATE
+目标缺失、不可见或观测过期       -> SEARCH_OBJECT
+目标可见但站位/视角/IK 不满足    -> APPROACH_AND_ALIGN
+目标可见、底盘制动且机械臂可达   -> MANIPULATE
+VLA 报告动作完成                 -> VERIFY
+验证通过                         -> 更新对象关系并进入下一目标
+```
+
+失败后不重新询问大模型逐帧决策。`PATH_BLOCKED` 回到 VLN，`TARGET_NOT_FOUND`
+回到搜索，`OUT_OF_REACH/BAD_VIEWPOINT` 回到对齐，`OBJECT_SLIPPED` 回到
+对齐/操作，`VERIFY_FAILED` 重新验证；碰撞、TF 缺失、对象身份歧义、未实现技能或控制
+租约丢失立即阻塞。所有恢复都有次数上限。
+
+新目录的完整接口、示例 Mission 和 VLA 到货后的 method/JSON 合同见
+`g1d_dual_brain_agent/README.md`。新入口：
+
+```bash
+# 只验证任务，不启动 Isaac
+./mobilemanibench.sh dual-agent \
+  --navigation-scene home \
+  --command '请带我到客厅沙发旁'
+
+# 完整任务合同（当前缺 live 搜索/VLA/验证时会按设计 blocked）
+./mobilemanibench.sh dual-agent \
+  --mission g1d_dual_brain_agent/mission.example.json
+```
+
+## 3. 保留的 v1 顺序基线结构
 
 ```text
 用户中文/英文指令
@@ -67,7 +135,7 @@ PluginVlaAdapter
 - `scripts/run_g1d_agent.py`：命令行入口；
 - `g1d_agent/tests/test_agent.py`：路由和失败传播测试。
 
-## 3. 现有 VLN 如何被复用
+## 4. 现有 VLN 如何被复用
 
 Hospital VLN 的数据和执行链保持原样：
 
@@ -126,7 +194,7 @@ SAM3.1 货架语义投影和正式地点审核也已完成。证据边界见
 0.50 和 0.20 阈值下均无检测，因此不会使用预设家具坐标补齐。正式沙发导航实际成功，
 523 帧、1.838 m、0.119 m/0.120 rad。
 
-## 4. Agent 如何做决定
+## 5. v1 Agent 如何做固定顺序决定
 
 当前 `RuleTaskPlanner` 使用保守、可审计的任务语义规则，不调用新的导航模型：
 
@@ -193,7 +261,7 @@ DeepSeek 仍位于现有 VLN 内部，负责把模糊地点描述约束到审核
 `block_collision` 或 `block_configuration`。`ReadinessRecoveryController` 最多做三次
 有界恢复，每次都必须重新获取观测和重新门控；碰撞或配置错误不会自动重试。
 
-## 5. 当前使用方法
+## 6. v1 当前使用方法
 
 默认只规划，不启动 Isaac：
 
@@ -245,7 +313,7 @@ backend 同时使用。真实任务必须由同一 Isaac 会话或 ROS 2 机器�
 
 大型仿真前仍须检查是否已有 Isaac Kit 进程，避免多个实例争用 GPU。
 
-## 6. VLA 团队需要交付什么
+## 7. VLA 团队需要交付什么
 
 至少需要以下内容，不能只给一个权重文件：
 
@@ -282,7 +350,7 @@ right_hand_index_1_joint
 VLN 到达后锁定/保持底盘，由 VLA 操作右臂和多指手。等这一边界稳定后，才考虑让 VLA
 输出短距离视觉伺服底盘动作。
 
-## 7. VLA backend 接口
+## 8. VLA backend 接口
 
 复制并修改模板：
 
@@ -364,7 +432,7 @@ VLA 返回 `succeeded` 还不够；`success` 必须为 `true`，并由仿真环�
 Hospital runner 报告到达后保持 SimulationApp、相机、机器人和物体状态不变，直接调用
 backend 的操作循环。不能依赖关闭并重开场景来声称连续移动操作已经通过。
 
-## 8. 在 Isaac Sim 中接入 VLA 的步骤
+## 9. 在 Isaac Sim 中接入 VLA 的步骤
 
 1. 确认使用主 Isaac Sim 6.0.1/Python 3.12，或把 VLA 部署成独立进程；不要把
    MobileManiBench Python 3.10 依赖直接混入主 Isaac Python。
@@ -389,7 +457,7 @@ backend 的操作循环。不能依赖关闭并重开场景来声称连续移动
 或 gRPC 传输版本化 observation/action 消息；Agent 的 `PluginVlaAdapter` 可以再封装这个
 客户端。跨进程消息必须带 schema 版本、frame ID、时间戳和 action sequence ID。
 
-## 9. 从仿真迁移到物理 G1-D
+## 10. 从仿真迁移到物理 G1-D
 
 仿真和真机应复用任务计划与 VLA observation/action schema，但执行桥必须分开：
 
@@ -417,7 +485,7 @@ backend 的操作循环。不能依赖关闭并重开场景来声称连续移动
 接入，详见
 `docs/G1D_REAL_ROS2_NAV.md`。
 
-## 10. 近期建议验收顺序
+## 11. 近期建议验收顺序
 
 1. 保持现有 Hospital VLN 回归不变。
 2. 完成 G1-D 右手到红色方块侧面的无接触预抓取位姿。

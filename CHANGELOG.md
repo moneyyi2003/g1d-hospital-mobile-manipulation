@@ -3,6 +3,39 @@
 本文件记录能够影响复现、行为、接口或任务状态的重要变更。日期使用 UTC；生成物刷新和
 无行为影响的小改动不单独记录。
 
+## 2026-07-30
+
+### 并行双脑协同 Agent v2 框架
+
+- 新增 `g1d_dual_brain_agent/`，不删除或替换原 `g1d_agent/`。新 Executive 以
+  `NAVIGATE`、`SEARCH_OBJECT`、`APPROACH_AND_ALIGN`、`MANIPULATE`、`VERIFY`
+  五个结构化技能管理长时程任务。
+- 新增持久化对象级世界记忆和任务 blackboard，记录全局/局部位姿、房间和支撑关系、
+  可见性、可达性、携带状态、任务进度及结构化失败原因；相同 mission ID 支持续跑。
+- 新增底盘、右臂和右手互斥控制租约、generation 防旧租约误释放和急停锁存。VLN/VLA
+  不联合训练、不同时争夺控制，但共享任务状态与执行结果。
+- Executive 按失败事件有界重规划：路径阻塞回到导航，目标丢失回到搜索，不可达回到
+  对齐，物体滑落回到对齐/操作；碰撞、TF、对象歧义、控制租约丢失或缺失 backend
+  fail-closed。
+- 新增旧 adapter 兼容桥和 `dual-agent` 入口。家庭导航仍委托
+  `home-vln-formal`，继续使用 G1-D 自采 RGB、LingBot/SAM3、semantic/region、审核地点
+  和正式 occupancy，不引入现成真值地图。VLA 到货后可沿用 factory 配置，并实现可选
+  `search_object`、`approach_and_align`、`verify_task` 方法。
+- 新增版本化 Mission 示例和中英文接入说明；更新 `vlaandvln.md`，明确 v1 为保留的
+  顺序基线、v2 为推荐动态协同框架。
+
+验证：
+
+- v2 控制仲裁、对象记忆、动态执行和旧 VLN 桥共 14 项轻量测试通过。
+- 旧 Agent 28 项测试通过；Python 编译和 shell 语法检查通过。
+- `dual-agent` 家庭纯导航 plan-only 成功生成合同，未启动 Isaac。
+
+已知限制：
+
+- 本次未启动耗时 Isaac 仿真；只验证框架、合同和兼容映射，不新增导航物理验收证据。
+- 实时对象搜索、家庭精确停靠、VLA 权重/G1-D 动作映射和独立物理验证后端尚未交付；
+  交互 Mission 当前会按设计阻塞，不能表述为移动抓取闭环成功。
+
 ## 2026-07-29
 
 ### 家庭物品实体与无类别清单自主发现

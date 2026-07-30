@@ -154,6 +154,9 @@ case "${command_name}" in
     agent)
         exec python3 "${WORKSPACE_DIR}/scripts/run_g1d_agent.py" "$@"
         ;;
+    dual-agent)
+        exec python3 "${WORKSPACE_DIR}/scripts/run_g1d_dual_brain_agent.py" "$@"
+        ;;
     g1d-real-nav)
         if [[ ! -f /opt/ros/humble/setup.bash ]]; then
             echo "ROS 2 Humble is missing: /opt/ros/humble/setup.bash" >&2
@@ -193,7 +196,7 @@ case "${command_name}" in
         exec "${ENV_DIR}/bin/python" "$@"
         ;;
     help|-h|--help)
-        echo "Usage: ./mobilemanibench.sh {isaacsim|smoke|g1-d-smoke|vln|simple-room-vln|home-vln|home-vln-formal|home-assets|home-survey|home-discover|home-map|home-web|warehouse-survey|warehouse-map|warehouse-vln|warehouse-vln-formal|warehouse-scene-audit|hospital-survey|hospital-map|hospital-vln|hospital-demo|hospital-web|hospital-docking|hospital-object-docking|hospital-object-web|agent|g1d-real-nav|doctor|convert-urdf|python} [args...]"
+        echo "Usage: ./mobilemanibench.sh {isaacsim|smoke|g1-d-smoke|vln|simple-room-vln|home-vln|home-vln-formal|home-assets|home-survey|home-discover|home-map|home-web|warehouse-survey|warehouse-map|warehouse-vln|warehouse-vln-formal|warehouse-scene-audit|hospital-survey|hospital-map|hospital-vln|hospital-demo|hospital-web|hospital-docking|hospital-object-docking|hospital-object-web|agent|dual-agent|g1d-real-nav|doctor|convert-urdf|python} [args...]"
         echo "  isaacsim     Launch the pinned MobileManiBench Isaac Sim GUI environment."
         echo "  smoke        Load one headless MobileManiBench G1/YCB environment."
         echo "  g1-d-smoke   Load and step the converted custom G1_D articulation."
@@ -220,6 +223,7 @@ case "${command_name}" in
         echo "  hospital-object-docking Run the isolated object-relative precision docking demo."
         echo "  hospital-object-web Serve unified semantic-region/object docking live UI (port 6009)."
         echo "  agent        Plan or execute a task through the existing VLN and future VLA."
+        echo "  dual-agent   Run the event-driven VLN-align-VLA executive (v2, fail-closed)."
         echo "  g1d-real-nav Launch fail-closed physical G1-D ROS 2/Nav2 (hardware output disabled)."
         echo "  doctor       Check Python, GPU, robot, USD, and official assets."
         echo "  convert-urdf Convert g1_d_description/g1_d.urdf to USD."

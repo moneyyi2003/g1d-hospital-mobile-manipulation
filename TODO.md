@@ -1,6 +1,6 @@
 # 当前任务与交接状态
 
-更新时间：2026-07-29（UTC）
+更新时间：2026-07-30（UTC）
 
 ## 当前结论
 
@@ -19,8 +19,10 @@ Hospital TCP dashboard 已能在浏览器同步显示 Isaac chase camera、LingB
 occupancy map 上的实时机器人轨迹，并已接入 DeepSeek 模糊地点理解，不依赖 WebRTC
 UDP。2026-07-23 的 WebRTC 排查仍确认：当前 AutoDL 公有云实例没有浏览器可达的
 47998/UDP 媒体路径；该外部网络条件解决前，原生 WebRTC 页面仍会停在
-`WAITING FOR STREAM`。任务级 G1-D Agent 已能把指令安全分解为 VLN、VLA 或
-VLN → VLA；VLA 仍等待外部团队交付，不属于当前已验收能力。
+`WAITING FOR STREAM`。保留的 v1 Agent 已能做固定顺序路由；新增的并行 v2 目录已提供
+对象级共享记忆、五技能动态路由、控制权仲裁和有界重规划。它继续复用现有正式 VLN，
+但实时对象搜索、家庭精确对齐、VLA 和独立验证仍等待 live backend，不属于当前已验收
+能力。
 
 ## 已完成并验证
 
@@ -69,6 +71,13 @@ VLN → VLA；VLA 仍等待外部团队交付，不属于当前已验收能力�
 - [x] 新增 G1-D 任务级 Agent：保守路由 `VLN`、`VLA`、`VLN -> VLA`，导航阶段只调用
   既有 `hospital-vln` / `hospital-object-docking`；VLA 提供外部 backend 配置和
   handoff context 插槽，未接入时明确 `blocked`。
+- [x] 新增并行 `g1d_dual_brain_agent/` v2，不删除 v1：Executive 按
+  `NAVIGATE -> SEARCH_OBJECT -> APPROACH_AND_ALIGN -> MANIPULATE -> VERIFY`
+  动态选择技能；持久化对象记忆和任务 blackboard，互斥仲裁底盘/右臂/右手，并按
+  `PATH_BLOCKED`、`OUT_OF_REACH`、`OBJECT_SLIPPED` 等失败原因有界重规划。
+- [x] 新 `dual-agent` 通过兼容桥继续调用既有 Hospital/Warehouse/Family Home adapter；
+  家庭纯 VLN 明确使用 `home-vln-formal`。新增 Mission JSON、未来 VLA/搜索/对齐/验证
+  method 插槽和 14 项轻量测试；缺少 live backend 时 fail-closed。
 - [x] 新增 `vlaandvln.md`，记录现有 LingBot/SAM3/语义数据库/DeepSeek 导航链、Agent
   状态机、VLA 交付接口、Isaac 同会话接管要求与真机 sim-to-real 安全步骤。
 - [x] Agent 增加严格的“物体 + 技能”交互配置库；预抓取距离由配置显式交给既有
@@ -153,9 +162,10 @@ VLN → VLA；VLA 仍等待外部团队交付，不属于当前已验收能力�
   实现多候选生成/排序，默认 `hospital-web` 不得改变。
 - [ ] **P1：移动操作尚未闭环。** G1-D 右臂、多指手、IK、接触参数和抓取成功判据仍需
   单独配置，不能复用官方 G1 平行夹爪动作空间。
-- [ ] **P1：VLA backend 尚未交付。** 当前 Agent 的 VLA 插槽会 fail-closed 为
+- [ ] **P1：VLA backend 尚未交付。** v1/v2 的 VLA 插槽都会 fail-closed 为
   `blocked`；需要 VLA 团队提供权重、预处理、相机协议、G1-D 动作映射、依赖环境和成功
-  判据，并在 Hospital runner 到达后保持同一 Isaac SimulationApp 完成连续操作。
+  判据。v2 还需接入 `search_object`、`approach_and_align` 和 `verify_task` live
+  method，并在同一 Isaac SimulationApp 完成连续操作。
 - [ ] **P1：VLA 启动门尚无实时 provider。** `interaction_profiles.json` 当前仅有
   provisional 红色方块拿取配置；仍需在同一 Isaac 会话接入头部/右腕相机、SAM3 +
   metric depth/TF、底盘速度、右臂 IK 与碰撞结果，并用实测标定距离区间。
