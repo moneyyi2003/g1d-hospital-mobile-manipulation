@@ -20,12 +20,16 @@ import json
 import math
 import os
 from pathlib import Path
+import subprocess
 import sys
 import time
 from typing import Sequence
 
 
 ROOT = Path(__file__).resolve().parent
+LINGBOT_NAV_SRC = ROOT / "lingbot_semantic_nav/src"
+if str(LINGBOT_NAV_SRC) not in sys.path:
+    sys.path.insert(0, str(LINGBOT_NAV_SRC))
 ROOM_USD = ROOT / "Assets/room/IsaacSim/SimpleRoom_flat.usd"
 if not ROOM_USD.is_file():
     ROOM_USD = ROOT / "Assets/room/IsaacSim/SimpleRoom.usd"
@@ -37,6 +41,7 @@ DEFAULT_FORMAL_PLACES = DEFAULT_OUTPUT / "places_formal.json"
 DEFAULT_HOME_OUTPUT = ROOT / "outputs/family_home_vln"
 DEFAULT_HOME_LINGBOT_MAP = DEFAULT_HOME_OUTPUT / "lingbot_map/map.yaml"
 DEFAULT_HOME_FORMAL_PLACES = DEFAULT_HOME_OUTPUT / "places_formal.json"
+DEFAULT_HOME_FORMAL_OBJECTS = DEFAULT_HOME_OUTPUT / "objects_formal.json"
 
 ROBOT_PRIM_PATH = "/World/G1_D"
 LEFT_WHEEL_JOINT = "Left_Wheel_Joint"
@@ -76,6 +81,28 @@ def parse_args() -> argparse.Namespace:
                         help="ROS map.yaml built from aligned LingBot point cloud")
     parser.add_argument("--places", type=Path, default=DEFAULT_FORMAL_PLACES,
                         help="v2 place catalog containing an approved SAM3 docking pose")
+    parser.add_argument(
+        "--objects",
+        type=Path,
+        default=DEFAULT_HOME_FORMAL_OBJECTS,
+        help="reviewed scan-derived household object catalog",
+    )
+    parser.add_argument(
+        "--dual-agent",
+        action="store_true",
+        help="run NAVIGATE->live SEARCH_OBJECT->APPROACH_AND_ALIGN->VLA slot in one app",
+    )
+    parser.add_argument(
+        "--target-object",
+        default="houseplant",
+        help="reviewed object ID/label/alias used by --dual-agent",
+    )
+    parser.add_argument(
+        "--live-search-frames",
+        type=int,
+        default=9,
+        help="category-free live RGB views captured by SEARCH_OBJECT",
+    )
     parser.add_argument("--allow-bootstrap", action="store_true",
                         help="Explicitly allow measured Isaac geometry for demo-only navigation")
     parser.add_argument("--steps", type=int, default=0)
@@ -112,6 +139,8 @@ if args.scene_profile == "family-home":
         args.map = DEFAULT_HOME_LINGBOT_MAP
     if args.places == DEFAULT_FORMAL_PLACES:
         args.places = DEFAULT_HOME_FORMAL_PLACES
+    if args.objects == DEFAULT_HOME_FORMAL_OBJECTS:
+        args.objects = DEFAULT_HOME_FORMAL_OBJECTS
 if args.test:
     args.headless = True
     if args.steps <= 0:
@@ -120,6 +149,8 @@ if args.survey:
     args.no_camera = False
     if args.steps <= 0:
         args.steps = 6000
+if args.dual_agent:
+    args.no_camera = False
 
 try:
     camera_width, camera_height = (int(item) for item in args.resolution.lower().split("x", 1))
@@ -135,6 +166,10 @@ if not 1 <= args.live_fps <= 30:
     raise SystemExit("--live-fps must be between 1 and 30")
 if live_width <= 0 or live_height <= 0:
     raise SystemExit("--live-resolution dimensions must be positive")
+if args.live_search_frames < 3 or args.live_search_frames > 24:
+    raise SystemExit("--live-search-frames must be between 3 and 24")
+if args.dual_agent and args.scene_profile != "family-home":
+    raise SystemExit("--dual-agent currently requires --scene-profile family-home")
 
 for required in (ROOM_USD, ROBOT_USD, SOFA_USD):
     if not required.is_file():
@@ -176,6 +211,8 @@ from family_home_vln.household_objects import (
     HOUSEHOLD_OBJECTS,
     OBJECT_SET_SIGNATURE,
 )
+from family_home_vln.formal_mapping import plan_object_approach
+from family_home_vln.live_object_search import load_reviewed_object
 from hospital_vln.live import LivePublisher, publish_failure
 from simple_room_vln.artifacts import (
     SOFA_SET_TRANSLATION,
@@ -559,6 +596,479 @@ class SurveyRecorder:
         return path
 
 
+class FamilyHomeDualAgentSession:
+    """In-process skill backend that keeps one Isaac SimulationApp alive."""
+
+    def __init__(self, robot, camera, grid, places, output_dir: Path) -> None:
+        self.robot = robot
+        self.camera = camera
+        self.grid = grid
+        self.places = places
+        self.output_dir = output_dir
+        self.pose = robot_pose(robot)
+        self.application_id = f"isaac-sim-{os.getpid()}"
+        self.segments: list[dict] = []
+
+    def _drive(
+        self,
+        path: list[tuple[float, float]],
+        goal_yaw: float,
+        *,
+        precision: bool = False,
+    ) -> dict:
+        follower = PathFollower(
+            path,
+            goal_yaw=goal_yaw,
+            max_linear=0.24 if precision else 0.35,
+            max_angular=0.7 if precision else 0.9,
+            position_tolerance=0.03 if precision else 0.12,
+            yaw_tolerance=0.05 if precision else 0.12,
+            waypoint_tolerance=0.12 if precision else 0.18,
+        )
+        frame = 0
+        while simulation_app.is_running() and not follower.done:
+            observed = robot_pose(self.robot) if args.wheel_physics_only else self.pose
+            linear, angular, _label = follower.command(observed)
+            self.robot.apply_wheel_actions(
+                command_to_wheel_velocities(linear, angular)
+            )
+            if not args.wheel_physics_only:
+                self.pose = assisted_step(self.pose, linear, angular)
+                set_assisted_robot_pose(self.robot, self.pose, linear, angular)
+            if self.camera is not None:
+                self.camera.set_world_pose(
+                    *camera_world_pose(
+                        observed if args.wheel_physics_only else self.pose
+                    ),
+                    camera_axes="world",
+                )
+            simulation_app.update()
+            frame += 1
+            if args.steps > 0 and frame >= args.steps:
+                break
+        self.robot.apply_wheel_actions(np.zeros(2, dtype=np.float32))
+        app_utils.update_app(steps=5)
+        self.pose = robot_pose(self.robot) if args.wheel_physics_only else self.pose
+        error = math.dist((self.pose.x, self.pose.y), path[-1])
+        result = {
+            "success": follower.done and error <= 0.20,
+            "frames": frame,
+            "path_length_m": path_length(path),
+            "position_error_m": error,
+            "final_pose": {
+                "x": self.pose.x,
+                "y": self.pose.y,
+                "yaw": self.pose.yaw,
+            },
+        }
+        self.segments.append(result)
+        return result
+
+    def navigate(self, command, _memory):
+        from g1d_dual_brain_agent.models import (
+            FailureCode,
+            SkillResult,
+            SkillStatus,
+        )
+
+        target = resolve_place(command.instruction, self.places)
+        path = self.grid.plan(
+            (self.pose.x, self.pose.y), (target.pose.x, target.pose.y)
+        )
+        result = self._drive(path, target.pose.yaw)
+        return SkillResult(
+            command.command_id,
+            SkillStatus.SUCCEEDED if result["success"] else SkillStatus.FAILED,
+            (
+                f"同一 Isaac 会话已到达 {target.place_id}。"
+                if result["success"]
+                else f"导航未到达 {target.place_id}。"
+            ),
+            FailureCode.NONE if result["success"] else FailureCode.PATH_BLOCKED,
+            {
+                "application_id": self.application_id,
+                "target_place": target.place_id,
+                "navigation": result,
+            },
+        )
+
+    def _capture_live_views(self, target: dict) -> tuple[Path, Path]:
+        if self.camera is None:
+            raise RuntimeError("live SEARCH_OBJECT requires the G1-D RGB camera")
+        if args.wheel_physics_only:
+            raise RuntimeError(
+                "live panoramic search does not teleport in --wheel-physics-only mode"
+            )
+        root = self.output_dir / "live_search" / time.strftime("%Y%m%dT%H%M%SZ")
+        rgb_dir = root / "rgb"
+        rgb_dir.mkdir(parents=True, exist_ok=True)
+        anchor = target["map_position"]
+        center = math.atan2(
+            float(anchor["y"]) - self.pose.y,
+            float(anchor["x"]) - self.pose.x,
+        )
+        frames = []
+        for index in range(args.live_search_frames):
+            fraction = index / max(1, args.live_search_frames - 1)
+            yaw = center + math.radians(-70.0 + 140.0 * fraction)
+            self.pose = Pose2D(self.pose.x, self.pose.y, yaw)
+            set_assisted_robot_pose(self.robot, self.pose, 0.0, 0.0)
+            self.camera.set_world_pose(
+                *camera_world_pose(self.pose), camera_axes="world"
+            )
+            app_utils.update_app(steps=4)
+            image_name = f"{index:06d}.png"
+            if not save_camera_rgb(self.camera, rgb_dir / image_name):
+                raise RuntimeError(f"RGB camera produced no image at live view {index}")
+            frames.append(
+                {
+                    "frame": index,
+                    "image": f"rgb/{image_name}",
+                    "robot_pose": {
+                        "x": self.pose.x,
+                        "y": self.pose.y,
+                        "yaw": self.pose.yaw,
+                    },
+                }
+            )
+        manifest = {
+            "schema_version": 1,
+            "scene": FAMILY_HOME_SCENE_NAME,
+            "rgb_is_only_model_input": True,
+            "object_category_labels_supplied_to_perception": False,
+            "pose_consumer": "audit_only_not_live_model_input",
+            "camera": {"resolution": [camera_width, camera_height]},
+            "frames": frames,
+        }
+        manifest_path = root / "capture_manifest.json"
+        manifest_path.write_text(
+            json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        return manifest_path, rgb_dir
+
+    def search_object(self, command, _memory):
+        from g1d_dual_brain_agent.models import (
+            FailureCode,
+            SkillResult,
+            SkillStatus,
+        )
+
+        target = load_reviewed_object(args.objects, command.target_id)
+        try:
+            manifest, rgb_dir = self._capture_live_views(target)
+        except RuntimeError as exc:
+            return SkillResult(
+                command.command_id,
+                SkillStatus.BLOCKED,
+                str(exc),
+                FailureCode.UNSUPPORTED_SKILL,
+            )
+        result_path = manifest.parent / "search_result.json"
+        log_path = manifest.parent / "sidecar.log"
+        python = ROOT / "envs/lingbot-map/bin/python"
+        process_args = [
+            str(python),
+            str(ROOT / "scripts/search_live_household_object.py"),
+            "--manifest",
+            str(manifest),
+            "--rgb-dir",
+            str(rgb_dir),
+            "--catalog",
+            str(args.objects),
+            "--target",
+            command.target_id,
+            "--output",
+            str(result_path),
+            "--maximum-frames",
+            str(args.live_search_frames),
+        ]
+        child_env = os.environ.copy()
+        # SimulationApp sets Python 3.12 runtime variables in-process.  They
+        # must not leak into the isolated LingBot Python 3.10 sidecar.
+        for key in (
+            "PYTHONHOME",
+            "PYTHONEXECUTABLE",
+            "__PYVENV_LAUNCHER__",
+            "_PYTHON_SYSCONFIGDATA_NAME",
+        ):
+            child_env.pop(key, None)
+        child_env["PYTHONPATH"] = os.pathsep.join(
+            [
+                str(ROOT),
+                str(ROOT / "lingbot_semantic_nav/src"),
+                str(ROOT / "lingbot_semantic_nav/third_party/lingbot-map"),
+            ]
+        )
+        child_env["PYTHONNOUSERSITE"] = "1"
+        child_env["PATH"] = os.pathsep.join(
+            [str(python.parent), "/usr/local/bin", "/usr/bin", "/bin"]
+        )
+        conda_lib = str(python.parent.parent / "lib")
+        child_env["LD_LIBRARY_PATH"] = os.pathsep.join(
+            [
+                conda_lib,
+                *[
+                    item
+                    for item in child_env.get("LD_LIBRARY_PATH", "").split(
+                        os.pathsep
+                    )
+                    if item and "isaacsim/kit" not in item
+                ],
+            ]
+        )
+        with log_path.open("w", encoding="utf-8") as log:
+            process = subprocess.Popen(
+                process_args,
+                cwd=ROOT,
+                stdout=log,
+                stderr=subprocess.STDOUT,
+                text=True,
+                env=child_env,
+            )
+            started = time.monotonic()
+            while process.poll() is None and simulation_app.is_running():
+                self.robot.apply_wheel_actions(np.zeros(2, dtype=np.float32))
+                simulation_app.update()
+                if time.monotonic() - started > 240.0:
+                    process.terminate()
+                    process.wait(timeout=10)
+                    break
+        if not result_path.is_file():
+            return SkillResult(
+                command.command_id,
+                SkillStatus.FAILED,
+                "live RGB search sidecar did not produce a result",
+                FailureCode.ADAPTER_ERROR,
+                {"log": str(log_path), "application_id": self.application_id},
+            )
+        result = json.loads(result_path.read_text(encoding="utf-8"))
+        matches = result.get("live_matches", [])
+        success = result.get("success") is True and bool(matches)
+        anchor = target["map_position"]
+        distance = math.dist(
+            (self.pose.x, self.pose.y),
+            (float(anchor["x"]), float(anchor["y"])),
+        )
+        update = {
+            "object_id": target["object_id"],
+            "labels": list(target.get("aliases", [])),
+            "global_pose": dict(anchor),
+            "local_pose": {
+                "range_m": distance,
+                "bearing_rad": math.atan2(
+                    float(anchor["y"]) - self.pose.y,
+                    float(anchor["x"]) - self.pose.x,
+                )
+                - self.pose.yaw,
+                "source": "reviewed_static_map_anchor_after_live_rgb_confirmation",
+            },
+            "visible": success,
+            "detection_confidence": (
+                min(
+                    1.0,
+                    max(
+                        float(item.get("frame_occurrences", 1))
+                        for item in matches
+                    )
+                    / max(1, args.live_search_frames),
+                )
+                if success
+                else 0.0
+            ),
+            "last_seen_monotonic_sec": time.monotonic(),
+            "observation_source": "live_florence2_category_free_rgb",
+            "map_revision": str(
+                json.loads(args.objects.read_text(encoding="utf-8"))["map"][
+                    "sha256"
+                ]
+            ),
+            "reachable": None,
+        }
+        return SkillResult(
+            command.command_id,
+            SkillStatus.SUCCEEDED if success else SkillStatus.FAILED,
+            (
+                f"live RGB confirmed {target['object_id']}."
+                if success
+                else f"live RGB did not confirm {target['object_id']}."
+            ),
+            FailureCode.NONE if success else FailureCode.TARGET_NOT_FOUND,
+            {
+                "application_id": self.application_id,
+                "result": str(result_path),
+                "log": str(log_path),
+                "category_list_supplied_to_model": False,
+            },
+            (update,),
+        )
+
+    def approach_and_align(self, command, memory):
+        from g1d_dual_brain_agent.models import (
+            FailureCode,
+            SkillResult,
+            SkillStatus,
+        )
+
+        target = load_reviewed_object(args.objects, command.target_id)
+        anchor_payload = target["map_position"]
+        anchor = (float(anchor_payload["x"]), float(anchor_payload["y"]))
+        approach = target["approach"]
+        try:
+            goal, path = plan_object_approach(
+                self.grid,
+                self.pose,
+                anchor,
+                stand_off_m=float(approach["stand_off_m"]),
+                tolerance_m=float(approach["alignment_tolerance_m"]),
+            )
+        except ValueError as exc:
+            return SkillResult(
+                command.command_id,
+                SkillStatus.BLOCKED,
+                str(exc),
+                FailureCode.OUT_OF_REACH,
+            )
+        result = self._drive(path, goal.yaw, precision=True)
+        distance = math.dist((self.pose.x, self.pose.y), anchor)
+        yaw_error = abs(
+            math.atan2(
+                math.sin(goal.yaw - self.pose.yaw),
+                math.cos(goal.yaw - self.pose.yaw),
+            )
+        )
+        aligned = (
+            result["success"]
+            and abs(distance - float(approach["stand_off_m"]))
+            <= float(approach["alignment_tolerance_m"]) + 0.02
+            and yaw_error <= 0.18
+        )
+        record = memory.get_object(target["object_id"])
+        visible = bool(record and record.visible)
+        aligned = aligned and visible
+        update = {
+            "object_id": target["object_id"],
+            "visible": visible,
+            "reachable": aligned,
+            "reachability_context": {
+                "application_id": self.application_id,
+                "stand_off_m": distance,
+                "required_stand_off_m": approach["stand_off_m"],
+                "distance_tolerance_m": approach["alignment_tolerance_m"],
+                "yaw_error_rad": yaw_error,
+                "base_stopped": True,
+                "formal_occupancy_checked": True,
+                "manipulation_ready": target["manipulation_ready"],
+            },
+            "last_result": "aligned" if aligned else "alignment_failed",
+        }
+        return SkillResult(
+            command.command_id,
+            SkillStatus.SUCCEEDED if aligned else SkillStatus.FAILED,
+            (
+                f"G1-D aligned to {target['object_id']} at {distance:.3f} m."
+                if aligned
+                else f"G1-D object alignment failed at {distance:.3f} m."
+            ),
+            FailureCode.NONE if aligned else FailureCode.BAD_VIEWPOINT,
+            {
+                "application_id": self.application_id,
+                "navigation": result,
+                "distance_m": distance,
+                "yaw_error_rad": yaw_error,
+            },
+            (update,),
+        )
+
+
+def run_dual_agent_session(session: FamilyHomeDualAgentSession) -> dict:
+    from g1d_dual_brain_agent.executive import DualBrainExecutive
+    from g1d_dual_brain_agent.memory import SharedWorldMemory
+    from g1d_dual_brain_agent.models import GoalKind, Mission, TaskGoal
+    from g1d_dual_brain_agent.skills import (
+        CallableSkillExecutor,
+        SkillRegistry,
+        UnavailableSkillExecutor,
+    )
+    from g1d_dual_brain_agent.models import SkillKind
+
+    target = load_reviewed_object(args.objects, args.target_object)
+    memory_path = args.output_dir / "dual_agent_world_memory.json"
+    memory = SharedWorldMemory(memory_path)
+    skills = SkillRegistry()
+    skills.register(
+        SkillKind.NAVIGATE, CallableSkillExecutor(session.navigate)
+    )
+    skills.register(
+        SkillKind.SEARCH_OBJECT, CallableSkillExecutor(session.search_object)
+    )
+    skills.register(
+        SkillKind.APPROACH_ALIGN,
+        CallableSkillExecutor(session.approach_and_align),
+    )
+    skills.register(
+        SkillKind.MANIPULATE,
+        UnavailableSkillExecutor(
+            SkillKind.MANIPULATE,
+            "VLA checkpoint/plugin has not been delivered",
+        ),
+    )
+    mission = Mission(
+        mission_id=f"family-home-{int(time.time())}",
+        instruction=(
+            f"{args.command}; 搜索并对齐 {target['object_id']}，随后交给 VLA"
+        ),
+        goals=(
+            TaskGoal(
+                goal_id="mobile-manipulation-1",
+                kind=GoalKind.INTERACT,
+                instruction=f"操作 {target['object_id']}",
+                target_id=target["object_id"],
+                action="future_vla_manipulation",
+                region_hint=args.command,
+                success_condition="VLA execution and independent verification succeed",
+            ),
+        ),
+        maximum_attempts_per_skill=1,
+    )
+    result = DualBrainExecutive(
+        skills,
+        memory,
+        maximum_object_observation_age_sec=300.0,
+    ).execute(mission)
+    payload = result.to_dict()
+    succeeded_skills = {
+        event.get("payload", {}).get("result", {}).get("details", {}).get(
+            "application_id"
+        ): event.get("payload", {}).get("result", {}).get("status")
+        for event in payload["events"]
+        if event.get("type") == "skill_finished"
+    }
+    payload["same_simulation_app"] = (
+        set(key for key in succeeded_skills if key) == {session.application_id}
+    )
+    payload["application_id"] = session.application_id
+    payload["navigation_segments"] = session.segments
+    payload["pre_vla_pipeline_succeeded"] = all(
+        any(
+            event.get("type") == "skill_finished"
+            and event.get("payload", {}).get("result", {}).get("status")
+            == "succeeded"
+            and event.get("payload", {}).get("result", {}).get("details", {}).get(
+                "application_id"
+            )
+            == session.application_id
+            and event.get("payload", {})
+            .get("result", {})
+            .get("message", "")
+            .startswith(prefix)
+            for event in payload["events"]
+        )
+        for prefix in ("同一 Isaac 会话已到达", "live RGB confirmed", "G1-D aligned")
+    )
+    return payload
+
+
 def main() -> int:
     args.output_dir.mkdir(parents=True, exist_ok=True)
     if args.survey or args.allow_bootstrap:
@@ -569,7 +1079,10 @@ def main() -> int:
             grid, places = build_bootstrap_artifacts(args.output_dir)
             map_source = "isaac_geometry_bootstrap"
     else:
-        missing = [str(path) for path in (args.map, args.places) if not path.is_file()]
+        required_artifacts = [args.map, args.places]
+        if args.dual_agent:
+            required_artifacts.append(args.objects)
+        missing = [str(path) for path in required_artifacts if not path.is_file()]
         if missing:
             raise FileNotFoundError(
                 "正式导航拒绝退化到 Isaac 几何；缺少 LingBot/SAM3 工件："
@@ -758,6 +1271,34 @@ def main() -> int:
             camera_axes="world",
         )
         app_utils.update_app(steps=20)
+
+    if args.dual_agent:
+        session = FamilyHomeDualAgentSession(
+            robot,
+            camera,
+            grid,
+            places,
+            args.output_dir,
+        )
+        payload = run_dual_agent_session(session)
+        summary_path = args.output_dir / "dual_agent_run_summary.json"
+        summary_path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        robot.apply_wheel_actions(np.zeros(2, dtype=np.float32))
+        app_utils.update_app(steps=5)
+        app_utils.stop()
+        print(
+            "Dual-agent result: "
+            f"status={payload['status']} "
+            f"pre_vla_pipeline_succeeded={payload['pre_vla_pipeline_succeeded']} "
+            f"same_simulation_app={payload['same_simulation_app']}"
+        )
+        print(f"Summary: {summary_path}")
+        # Until the VLA arrives, reaching its fail-closed slot is the expected
+        # end condition for this integration test.
+        return 0 if payload["pre_vla_pipeline_succeeded"] else 4
 
     follower = PathFollower(
         path,

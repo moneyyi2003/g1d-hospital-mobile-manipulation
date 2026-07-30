@@ -126,6 +126,15 @@ class FamilyHomeDashboardSession:
         semantic_metadata = self._optional_json(
             self.artifacts / "semantic/semantic_metadata.json"
         )
+        object_catalog = self._optional_json(
+            self._input_path(
+                "objects", self.artifacts / "objects_formal.json"
+            )
+        )
+        reviewed_by_prompt = {
+            str(item.get("source_label", "")).casefold(): item
+            for item in object_catalog.get("objects", [])
+        }
         raw_by_prompt = {
             str(item.get("prompt", "")).casefold(): item
             for item in sam3.get("prompts", [])
@@ -159,6 +168,11 @@ class FamilyHomeDashboardSession:
             evidence = evidence_by_prompt.get(prompt_key, [])
             anchor = semantic_metadata.get("anchors", {}).get(prompt)
             place = navigation_by_prompt.get(prompt_key)
+            reviewed = reviewed_by_prompt.get(prompt_key, {})
+            object_approved = bool(
+                self.formal_bundle_current
+                and reviewed.get("status") == "approved"
+            )
             approved = bool(
                 self.formal_bundle_current
                 and place
@@ -173,10 +187,19 @@ class FamilyHomeDashboardSession:
                     "label_source": "Florence-2 RGB 自主生成",
                     "recognized": True,
                     "mapped": bool(evidence),
+                    "searchable": object_approved,
+                    "object_id": reviewed.get("object_id", ""),
+                    "manipulation_ready": bool(
+                        reviewed.get("manipulation_ready", False)
+                    ),
                     "navigable": approved,
                     "status": (
                         "approved"
                         if approved
+                        else "approved_for_search_and_alignment"
+                        if object_approved
+                        else "rejected_by_review"
+                        if reviewed.get("status") == "rejected"
                         else "mapped_not_navigable"
                         if evidence
                         else "discovered_not_mapped"
@@ -198,6 +221,8 @@ class FamilyHomeDashboardSession:
                     "review_reason": (
                         ""
                         if approved
+                        else str(reviewed.get("review", {}).get("reason", ""))
+                        if reviewed
                         else "已形成地图语义，但没有对应的审核导航地点"
                         if evidence
                         else "已由 RGB 自主发现，但尚未形成合格的 SAM3 map-frame 证据"
@@ -231,6 +256,7 @@ class FamilyHomeDashboardSession:
         frame_count = len(survey.get("frames", []))
         mapped_count = sum(item["mapped"] for item in objects)
         approved_count = sum(item["navigable"] for item in objects)
+        searchable_count = sum(item["searchable"] for item in objects)
         return {
             "source": (
                 "G1-D RGB 巡检 → Florence-2 无类别清单自主发现 → "
@@ -247,6 +273,7 @@ class FamilyHomeDashboardSession:
                 "discovered_categories": len(objects),
                 "mapped_categories": mapped_count,
                 "approved_destinations": approved_count,
+                "approved_search_objects": searchable_count,
                 "semantic_regions": len(
                     semantic_metadata.get("region_labels", {})
                 ),

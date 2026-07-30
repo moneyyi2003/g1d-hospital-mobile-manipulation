@@ -1,0 +1,87 @@
+{
+  "schema_version": 1,
+  "reviewer": "family_home_scan_map_engineering_review",
+  "review_scope": "2026-07-29 G1-D RGB survey, Florence-2 autonomous labels, SAM3.1 prompt-frame evidence",
+  "default": {
+    "status": "rejected",
+    "reason": "label has not passed visual and map-frame evidence review"
+  },
+  "labels": {
+    "table": {
+      "status": "approved",
+      "object_class": "landmark",
+      "aliases": ["桌子", "table"],
+      "search_standoff_m": 0.9,
+      "alignment_tolerance_m": 0.12,
+      "manipulation_ready": false
+    },
+    "box": {
+      "status": "rejected",
+      "reason": "generic label is visually ambiguous with cabinetry and support furniture"
+    },
+    "houseplant": {
+      "status": "approved",
+      "object_class": "household_object",
+      "aliases": ["绿植", "盆栽", "植物", "houseplant", "plant"],
+      "search_standoff_m": 0.78,
+      "alignment_tolerance_m": 0.1,
+      "manipulation_ready": false
+    },
+    "chair": {
+      "status": "rejected",
+      "reason": "no gated map-frame SAM3 evidence"
+    },
+    "couch": {
+      "status": "approved",
+      "object_class": "landmark",
+      "aliases": ["沙发", "couch", "sofa"],
+      "search_standoff_m": 0.9,
+      "alignment_tolerance_m": 0.12,
+      "manipulation_ready": false
+    },
+    "sofa": {
+      "status": "rejected",
+      "reason": "duplicate semantic track of the approved couch object"
+    },
+    "curtain": {
+      "status": "rejected",
+      "reason": "prompt frame shows wall paneling rather than a curtain"
+    },
+    "bathtub": {
+      "status": "rejected",
+      "reason": "prompt frame shows media cabinetry rather than a bathtub"
+    },
+    "board": {
+      "status": "rejected",
+      "reason": "prompt frame does not contain a reviewable board instance"
+    },
+    "whiteboard": {
+      "status": "rejected",
+      "reason": "prompt frame shows couch, plant and wall; label is false"
+    },
+    "stool": {
+      "status": "approved",
+      "object_class": "household_object",
+      "aliases": ["凳子", "矮凳", "stool"],
+      "search_standoff_m": 0.72,
+      "alignment_tolerance_m": 0.1,
+      "manipulation_ready": false
+    },
+    "coffee table": {
+      "status": "approved",
+      "object_class": "landmark",
+      "aliases": ["茶几", "coffee table"],
+      "search_standoff_m": 0.82,
+      "alignment_tolerance_m": 0.1,
+      "manipulation_ready": false
+    },
+    "monitor": {
+      "status": "rejected",
+      "reason": "autonomous RGB label is plausible but SAM3 produced no gated map-frame observation"
+    },
+    "plastic chair": {
+      "status": "rejected",
+      "reason": "prompt frame is ambiguous and SAM3 produced no gated map-frame observation"
+    }
+  }
+}

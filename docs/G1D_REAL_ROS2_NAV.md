@@ -112,6 +112,16 @@ cd /root/autodl-tmp
 `allow_hardware_output:=False`。此时即使发布 `/cmd_vel`，`safe_cmd_vel` 也保持零，
 `/g1d/safety/brake=True`，arm 服务返回失败。
 
+重建后的家庭正式图使用：
+
+```bash
+./mobilemanibench.sh g1d-home-real-nav
+```
+
+该入口只更换为家庭 `map.yaml` 和审核地点库，底盘、TF、里程计、制动和急停合同不变，
+同样强制 `allow_hardware_output:=False`。没有厂商驱动和实体安全验收时，不提供
+“跳过检查直接开电机”的命令。
+
 Nav2/AMCL 还要求真实、带正确时间戳和 TF 的 `/scan`。可由 2D LiDAR 直接提供，或由
 经过标定和时间同步的 RGB-D/depth-to-scan 节点提供；只有 RGB 图像而没有可定位的深度/
 激光观测，不能宣称 AMCL 已完成物理定位。LingBot RGB-only 地图负责离线建图，不会自动

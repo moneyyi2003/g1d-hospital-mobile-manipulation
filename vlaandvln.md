@@ -15,7 +15,7 @@
 VLA 直接生成全局坐标。家庭场景已经从 215 帧 G1-D 自采 RGB 生成 LingBot 点云和
 occupancy，并接入 SAM3.1、region、地点审核与网页。新版感知先由 Florence-2 在没有
 类别清单、USD 语义或物体坐标的情况下从 G1-D RGB 自主生成标签，再由 SAM3 跟踪；旧图
-当前只批准 `living_room_sofa`，新增物品后的正式图正在重建。当前 VLA 尚未交付，因此代码提供了明确的 backend 插槽；
+已由新增物品后的 215 帧巡检替换。当前 VLA 尚未交付，因此代码提供了明确的 backend 插槽；
 执行到 VLA 步骤时会返回 `blocked`，不会把“导航到物体旁边”误报为“抓取成功”。
 
 2026-07-30 新增的 `g1d_dual_brain_agent/` 是推荐的 v2 框架；原
@@ -88,7 +88,20 @@ VLA 报告动作完成                 -> VERIFY
 # 完整任务合同（当前缺 live 搜索/VLA/验证时会按设计 blocked）
 ./mobilemanibench.sh dual-agent \
   --mission g1d_dual_brain_agent/mission.example.json
+
+# 家庭真实集成：同一 SimulationApp 连续执行到 VLA 边界
+./mobilemanibench.sh home-dual-agent \
+  --headless --test --resolution 640x360 \
+  --command '请带我到客厅沙发旁' \
+  --target-object houseplant
 ```
+
+家庭集成不再使用 v2 的空 live method：`NAVIGATE` 读取正式 occupancy/地点，
+`SEARCH_OBJECT` 在当前位置采集机载 RGB 并调用类别自由 Florence sidecar，
+`APPROACH_AND_ALIGN` 读取审核 `objects_formal.json` 中由
+LingBot+SAM3 得到的锚点及对象专属距离，在正式膨胀 occupancy 上重新选取从当前位姿
+可达的 SE(2) 停靠位。三种技能在同一进程内共享机器人、相机、场景和
+`application_id`；只有视觉模型运行在隔离的 Python 3.10 sidecar。
 
 ## 3. 保留的 v1 顺序基线结构
 
@@ -188,11 +201,14 @@ SAM3.1 货架语义投影和正式地点审核也已完成。证据边界见
 家庭场景由卧室、客厅、餐区和厨房组成。新增无语义家庭实体后已重新完成
 19.285 m G1-D RGB 巡检和 215 帧
 `640x360` 采集。LingBot 只读取这批 RGB，推理后采用明确标注的 pose-anchored 米制
-融合；旧图曾生成 169 × 153、0.05 m/cell occupancy。新版 Florence-2 自主发现实际
-接受 14 个跨帧标签，其中包括新增 `houseplant` 和 `monitor`。旧 SAM3.1 沙发提示得到 87 条原始检测，
-经 36 帧防漂移窗口保留 36 条 map-frame 证据并生成停靠位；其他三类在
-0.50 和 0.20 阈值下均无检测，因此不会使用预设家具坐标补齐。正式沙发导航实际成功，
-523 帧、1.838 m、0.119 m/0.120 rad。
+融合，新图为 169 × 152、0.05 m/cell occupancy。Florence-2 接受 14 个跨帧标签；
+SAM3 时间窗投影形成 7 个锚点/region，审核后批准 5 个对象用于搜索和停靠，错误或无
+三维证据标签保持 rejected。地点库仍只批准 `living_room_sofa`。
+
+2026-07-30 的实际同会话验收中，正式 VLN 到客厅误差 0.120 m；live RGB 自主输出
+`houseplant` 4 帧和 `potted plant` 3 帧；精停误差 0.030 m、对象距离 0.749 m、朝向
+误差 0.049 rad。随后 VLA 插槽以 `vla_unavailable` 阻塞。这证明导航—搜索—对齐已经
+连续，但不等于抓取成功，也不等于纯轮地接触或真机验收。
 
 ## 5. v1 Agent 如何做固定顺序决定
 

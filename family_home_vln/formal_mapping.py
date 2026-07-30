@@ -270,6 +270,197 @@ def _scan_docking_pose(grid, anchor: tuple[float, float]) -> Pose2D:
     return Pose2D(x, y, math.atan2(anchor[1] - y, anchor[0] - x))
 
 
+def plan_object_approach(
+    grid,
+    start: Pose2D,
+    anchor: tuple[float, float],
+    *,
+    stand_off_m: float,
+    tolerance_m: float,
+) -> tuple[Pose2D, list[tuple[float, float]]]:
+    """Plan a footprint-safe object-facing base pose from a live robot pose.
+
+    The target position is scan-derived.  The search is performed on the
+    inflated formal occupancy, so the returned base cell is both reachable
+    from ``start`` and collision-safe for the G1-D footprint.
+    """
+
+    if stand_off_m <= 0.0 or tolerance_m <= 0.0:
+        raise ValueError("object stand-off and tolerance must be positive")
+    start_cell = grid.world_to_cell(start.x, start.y)
+    reachable = _reachable_cells(grid, start_cell)
+    if not reachable:
+        raise ValueError("current G1-D pose is not in reachable formal free space")
+    candidates: list[tuple[float, float, float, float]] = []
+    for row, col in reachable:
+        x, y = grid.cell_to_world((row, col))
+        distance = math.dist((x, y), anchor)
+        if abs(distance - stand_off_m) <= max(tolerance_m, grid.resolution):
+            candidates.append(
+                (
+                    abs(distance - stand_off_m),
+                    math.dist((start.x, start.y), (x, y)),
+                    x,
+                    y,
+                )
+            )
+    if not candidates:
+        raise ValueError(
+            "no footprint-safe reachable base pose satisfies the object stand-off"
+        )
+    _distance_error, _travel_hint, x, y = min(candidates)
+    pose = Pose2D(x, y, math.atan2(anchor[1] - y, anchor[0] - x))
+    route = grid.plan((start.x, start.y), (pose.x, pose.y))
+    return pose, route
+
+
+def build_formal_object_catalog(
+    map_yaml: Path,
+    semantic_observations: Path,
+    discovery_file: Path,
+    review_file: Path,
+    output_file: Path,
+    *,
+    household_object_set_signature: str = "",
+) -> dict[str, Any]:
+    """Build a reviewed object memory without reading Isaac scene truth."""
+
+    discovery = json.loads(discovery_file.read_text(encoding="utf-8"))
+    review = json.loads(review_file.read_text(encoding="utf-8"))
+    if int(review.get("schema_version", 0)) != 1:
+        raise ValueError("family-home object review schema_version must be 1")
+    reviewer = str(review.get("reviewer", "")).strip()
+    if not reviewer:
+        raise ValueError("family-home object review needs a reviewer")
+    _payload, observations = _load_observations(semantic_observations)
+    grid = load_ros_grid(map_yaml, robot_radius_m=ROBOT_RADIUS_M)
+    discovered = {
+        str(item.get("label", "")).strip().casefold(): item
+        for item in discovery.get("objects", [])
+    }
+    policies = review.get("labels", {})
+    default_policy = dict(review.get("default", {}))
+    objects: list[dict[str, Any]] = []
+    approved_index = 0
+    for label, discovery_item in discovered.items():
+        policy = {**default_policy, **dict(policies.get(label, {}))}
+        evidence = _prompt_observations(observations, label)
+        status = str(policy.get("status", "rejected"))
+        reason = str(policy.get("reason", "")).strip()
+        if status == "approved" and reason == str(
+            default_policy.get("reason", "")
+        ).strip():
+            reason = "visual label and map-frame evidence accepted"
+        if status == "approved" and not evidence:
+            status = "rejected"
+            reason = "review policy approved the label but no gated map-frame evidence exists"
+        base = {
+            "source_label": label,
+            "aliases": list(dict.fromkeys([label, *policy.get("aliases", [])])),
+            "status": status,
+            "discovery": {
+                "prompt_frame": int(discovery_item.get("prompt_frame", -1)),
+                "frame_occurrences": int(discovery_item.get("frame_occurrences", 0)),
+                "raw_detection_count": int(discovery_item.get("raw_detection_count", 0)),
+            },
+            "semantic_observation_count": len(evidence),
+            "review": {
+                "status": status,
+                "reviewer": reviewer,
+                "reason": reason,
+            },
+        }
+        if status != "approved":
+            objects.append(base)
+            continue
+        approved_index += 1
+        anchor = _anchor(evidence)
+        stand_off = float(policy["search_standoff_m"])
+        tolerance = float(policy["alignment_tolerance_m"])
+        try:
+            pose, route = plan_object_approach(
+                grid,
+                START_POSE,
+                anchor,
+                stand_off_m=stand_off,
+                tolerance_m=tolerance,
+            )
+        except ValueError as exc:
+            objects.append(
+                {
+                    **base,
+                    "status": "rejected",
+                    "review": {
+                        "status": "rejected",
+                        "reviewer": reviewer,
+                        "reason": str(exc),
+                    },
+                }
+            )
+            continue
+        object_id = (
+            "scan_"
+            + "".join(character if character.isalnum() else "_" for character in label)
+            .strip("_")
+            + f"_{approved_index:02d}"
+        )
+        objects.append(
+            {
+                **base,
+                "object_id": object_id,
+                "object_class": str(policy.get("object_class", "unknown")),
+                "map_position": {
+                    "x": anchor[0],
+                    "y": anchor[1],
+                    "frame_id": "map",
+                    "source": "lingbot_rgb_only_geometry+sam3.1_mask",
+                },
+                "approach": {
+                    "pose": {
+                        "x": pose.x,
+                        "y": pose.y,
+                        "yaw": pose.yaw,
+                        "frame_id": "map",
+                    },
+                    "stand_off_m": stand_off,
+                    "alignment_tolerance_m": tolerance,
+                    "planned_path_length_from_survey_start_m": path_length(route),
+                    "faces_object_anchor": True,
+                    "footprint_radius_m": ROBOT_RADIUS_M,
+                },
+                "manipulation_ready": bool(
+                    policy.get("manipulation_ready", False)
+                ),
+                "track_ids": sorted(
+                    {str(item.get("track_id", "")) for item in evidence}
+                ),
+            }
+        )
+    payload = {
+        "schema_version": 1,
+        "artifact_type": "reviewed_scan_derived_household_object_catalog",
+        "map": {
+            "sha256": map_bundle_sha256(map_yaml),
+            "yaml": str(map_yaml),
+            "frame_id": "map",
+            "household_object_set_signature": household_object_set_signature,
+        },
+        "sources": {
+            "discovery": str(discovery_file),
+            "semantic_observations": str(semantic_observations),
+            "review_policy": str(review_file),
+            "isaac_scene_truth_used": False,
+        },
+        "objects": objects,
+    }
+    output_file.parent.mkdir(parents=True, exist_ok=True)
+    output_file.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    return payload
+
+
 def build_formal_place_catalog(
     map_yaml: Path,
     semantic_observations: Path,
@@ -343,6 +534,7 @@ def build_formal_place_catalog(
                 "id": candidate_id,
                 "pose": pose_payload,
                 "checks": {
+                    "clearance_m": ROBOT_RADIUS_M,
                     "footprint_radius_m": ROBOT_RADIUS_M,
                     "occupancy_status": "free",
                     "reachable": True,
@@ -401,6 +593,8 @@ __all__ = [
     "PROMPT_BY_PLACE",
     "PROMPT_ALIASES_BY_PLACE",
     "SEMANTIC_LABELS",
+    "build_formal_object_catalog",
     "build_formal_place_catalog",
     "build_scan_semantic_layers",
+    "plan_object_approach",
 ]

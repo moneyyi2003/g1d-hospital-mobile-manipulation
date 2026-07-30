@@ -1,6 +1,6 @@
 # G1-D 稍复杂家庭场景导航
 
-更新时间：2026-07-29（UTC）
+更新时间：2026-07-30（UTC）
 
 ## 1. 场景选择与边界
 
@@ -94,6 +94,22 @@ Agent 只生成任务计划：
 `home-vln-formal` 不带 `--allow-bootstrap`。正式地图或地点文件不存在、哈希不匹配或地点
 未审核时必须失败，不能回退到几何真值。
 
+同一 Isaac 会话的双脑链路：
+
+```bash
+./mobilemanibench.sh home-dual-agent \
+  --headless --test --resolution 640x360 \
+  --command '请带我到客厅沙发旁' \
+  --target-object houseplant
+```
+
+该命令由 v2 Executive 依次取得底盘控制租约并执行 `NAVIGATE`、实时
+`SEARCH_OBJECT`、`APPROACH_AND_ALIGN`，最后交给 VLA 插槽。搜索阶段在当前机器人
+位置用机载 RGB 拍摄 9 个视角，Florence-2 仍只接收 RGB 和任务 token；目标名称只在
+推理完成后用于匹配审核对象目录。Isaac 应用在外部 Python 3.10 感知 sidecar 推理时保持
+存活和制动，不重载场景。当前 VLA 未交付，因此预 VLA 三步通过后最终状态仍应为
+`blocked/vla_unavailable`。
+
 ## 3. 已完成的 Isaac 验证
 
 2026-07-29 在主 Isaac Sim 6.0.1 中实际加载项目 G1-D 数字孪生：
@@ -108,8 +124,9 @@ Agent 只生成任务计划：
   `starting -> loading -> running -> succeeded` 更新，530 帧、55 个实时轨迹采样点；
   餐桌任务为 548 帧、73 个轨迹采样点。MJPEG 可读取，卧室/餐区最终帧已目视确认能看到
   G1-D、家庭家具和绿色规划路线。
-- LingBot 实际处理 215 帧 RGB；全局 Sim(3) 只有 22/215 个对应点通过 0.45 m 门槛而被
-  拒绝，随后以明确标注的 pose-anchored 离线融合生成 169 × 153、0.05 m/cell 正式图。
+- 新物品巡检的 LingBot 实际处理 215 帧 RGB；全局 Sim(3) 只有 22/215 个对应点通过
+  0.45 m 门槛而被拒绝，随后以明确标注的 pose-anchored 离线融合生成
+  169 × 152、0.05 m/cell 正式图。
 - 旧正式图的 SAM3.1 沙发提示得到 87 个检测；人工检查发现离开视野后有跟踪漂移，正式投影用提示帧
   起 36 帧窗口保留 36 条证据。床、餐桌、操作台在 0.50 和 0.20 阈值下均为 0，地点
   审核结果为 1 approved / 3 rejected。
@@ -120,7 +137,15 @@ Agent 只生成任务计划：
 - 新增无语义家庭物品后的 G1-D 重巡检仍为 215 帧并成功。Florence-2 在 80 个均匀
   RGB 帧及其无类别局部视图上自主生成 621 条原始检测；跨帧质量门接受 14 个标签，
   包括新增实体 `houseplant`（14 帧）和 `monitor`（2 帧）。这一步没有读取资产名称或
-  坐标；新物品版本的 LingBot/SAM3 正式四层尚待重建，因此旧正式图不能用于新版导航。
+  坐标。新图 SAM3 投影后有 7 类形成 map-frame 锚点和 7 个 region；人工审核批准
+  `table`、`houseplant`、`couch`、`stool`、`coffee table` 进入对象搜索/停靠目录，
+  拒绝 `box` 歧义、`sofa` 重复以及 `bathtub/board/whiteboard/curtain` 等错误标签。
+  `monitor` 虽有 RGB 候选，但没有合格 map-frame 证据，因此保持拒绝。
+- 同一 Isaac SimulationApp 端到端双脑验收成功到达 VLA 边界：正式客厅导航位置误差
+  0.120 m；9 帧 live RGB 类别自由发现输出 12 类并确认 `houseplant`（4 帧）及
+  `potted plant`（3 帧）；对象精停位置误差 0.030 m、底盘到对象锚点 0.749 m、朝向
+  误差 0.049 rad。三步 `application_id` 相同，随后按设计
+  `blocked/vla_unavailable`。
 
 以上导航使用 `stable_assisted`，用于稳定验证语言目标、地图、规划、相机和 Agent
 高层链路。它会写轮速，同时以确定性平面位姿更新保证回归，不等于家庭场景已经通过
@@ -144,22 +169,26 @@ Agent 只生成任务计划：
    的地点 ID。
 8. 正式产物写到
    `outputs/family_home_vln/lingbot_map/map.yaml` 和
-   `outputs/family_home_vln/places_formal.json`，再运行 `home-vln-formal`。
+   `outputs/family_home_vln/places_formal.json`。自主物体另写入
+   `objects_formal.json`；它保存审核状态、扫描锚点、对象专属停靠距离和
+   `manipulation_ready`，拒绝项仍保留证据但不能被 Agent 解析。
 9. 网页还要求 `mapping_summary.json` 引用真实四层 PNG，缺失时 fail-closed。
 10. 正式地图通过后，才在同一场景做 `--wheel-physics-only` 三次连续导航与制动验收。
 
 相机位姿不能作为 LingBot 的模型输入，也不能把 Isaac 几何直接栅格化后标成
 “RGB-only 正式地图”。
 
-当前家具是低多边形基础几何，SAM3 未能把蓝色方块床、灰色餐桌和操作台识别为对应类别。
+当前家具是低多边形基础几何，SAM3 未能把床和操作台识别为对应类别；通用 `table`
+也不足以在审核中自动等同于餐桌地点。
 这是当前资产/视觉域限制，不应通过读取 `HOME_FIXTURES` 坐标绕过。下一步应替换为更真实、
 具有稳定视觉外观的家庭 USD，重新巡检并复核提示帧，再重新审核这三个地点。
 
 ## 5. Agent、VLA 与真机接口
 
 `FamilyHomeVlnAdapter` 让任务级 Agent 把家庭地点指令交给现有 VLN。语言只选择审核
-`place_id`，不生成任意坐标。家庭物体预抓取和 VLA 尚未接好，因此操作指令在该 adapter
-上会明确 `blocked`，不会把“到达房间”误报为“已经抓取”。
+`place_id`，不生成任意坐标。`home-dual-agent` 已把 live RGB 搜索和家庭对象精停接到
+v2 Executive；VLA 和独立操作验证尚未接好，因此只在 `MANIPULATE` 明确 `blocked`，
+不会把“到达并对齐”误报为“已经抓取”。
 
 VLA 到货后，应在同一 Isaac SimulationApp 中保持场景、机器人、相机与时间连续：
 
@@ -179,3 +208,8 @@ TF、传感器和控制接口做数字孪生验证。当前代码没有驱动物
 继续使用现有 fail-closed ROS 2/Nav2 bridge，先接厂商轮驱、真实里程计、`/scan`、硬
 急停和 driver-ready，再依次做架空轮、隔离场低速与通信丢失制动验收；仿真成功不能替代
 这些真机安全步骤。
+
+家庭正式图的物理 bringup 入口为
+`./mobilemanibench.sh g1d-home-real-nav`，它仍强制
+`allow_hardware_output:=False`。当前主机没有已确认厂商驱动、机器人网络设备、实体硬
+急停回路或真实 `/scan`，所以不能据此声称物理 G1-D 已运动。

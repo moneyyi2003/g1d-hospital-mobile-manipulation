@@ -61,6 +61,16 @@ case "${command_name}" in
             --map "${WORKSPACE_DIR}/outputs/family_home_vln/lingbot_map/map.yaml" \
             --places "${WORKSPACE_DIR}/outputs/family_home_vln/places_formal.json" "$@"
         ;;
+    home-dual-agent)
+        exec "${WORKSPACE_DIR}/isaacsim/python.sh" \
+            "${WORKSPACE_DIR}/run_g1d_simple_room_vln.py" \
+            --scene-profile family-home \
+            --dual-agent \
+            --output-dir "${WORKSPACE_DIR}/outputs/family_home_vln" \
+            --map "${WORKSPACE_DIR}/outputs/family_home_vln/lingbot_map/map.yaml" \
+            --places "${WORKSPACE_DIR}/outputs/family_home_vln/places_formal.json" \
+            --objects "${WORKSPACE_DIR}/outputs/family_home_vln/objects_formal.json" "$@"
+        ;;
     home-survey)
         exec "${WORKSPACE_DIR}/isaacsim/python.sh" \
             "${WORKSPACE_DIR}/run_g1d_simple_room_vln.py" \
@@ -166,11 +176,32 @@ case "${command_name}" in
             echo "Build the ROS workspace before launching G1-D real navigation." >&2
             exit 1
         fi
+        set +u
         source /opt/ros/humble/setup.bash
         source "${WORKSPACE_DIR}/lingbot_semantic_nav/ros2_ws/install/setup.bash"
+        set -u
         exec ros2 launch lingbot_semantic_nav_ros g1d_real_nav2.launch.py \
             map:="${WORKSPACE_DIR}/outputs/warehouse_vln/lingbot_map/map.yaml" \
             places:="${WORKSPACE_DIR}/outputs/warehouse_vln/places_formal.json" \
+            allow_hardware_output:=False "$@"
+        ;;
+    g1d-home-real-nav)
+        if [[ ! -f /opt/ros/humble/setup.bash ]]; then
+            echo "ROS 2 Humble is missing: /opt/ros/humble/setup.bash" >&2
+            exit 1
+        fi
+        if [[ ! -f "${WORKSPACE_DIR}/lingbot_semantic_nav/ros2_ws/install/setup.bash" ]]; then
+            echo "Build the ROS workspace before launching G1-D real navigation." >&2
+            exit 1
+        fi
+        set +u
+        source /opt/ros/humble/setup.bash
+        source "${WORKSPACE_DIR}/lingbot_semantic_nav/ros2_ws/install/setup.bash"
+        set -u
+        exec ros2 launch lingbot_semantic_nav_ros g1d_real_nav2.launch.py \
+            map:="${WORKSPACE_DIR}/outputs/family_home_vln/lingbot_map/map.yaml" \
+            places:="${WORKSPACE_DIR}/outputs/family_home_vln/places_formal.json" \
+            initial_x:=0.0 initial_y:=0.0 initial_yaw:=0.0 \
             allow_hardware_output:=False "$@"
         ;;
     hospital-map)
@@ -196,7 +227,7 @@ case "${command_name}" in
         exec "${ENV_DIR}/bin/python" "$@"
         ;;
     help|-h|--help)
-        echo "Usage: ./mobilemanibench.sh {isaacsim|smoke|g1-d-smoke|vln|simple-room-vln|home-vln|home-vln-formal|home-assets|home-survey|home-discover|home-map|home-web|warehouse-survey|warehouse-map|warehouse-vln|warehouse-vln-formal|warehouse-scene-audit|hospital-survey|hospital-map|hospital-vln|hospital-demo|hospital-web|hospital-docking|hospital-object-docking|hospital-object-web|agent|dual-agent|g1d-real-nav|doctor|convert-urdf|python} [args...]"
+        echo "Usage: ./mobilemanibench.sh {isaacsim|smoke|g1-d-smoke|vln|simple-room-vln|home-vln|home-vln-formal|home-dual-agent|home-assets|home-survey|home-discover|home-map|home-web|warehouse-survey|warehouse-map|warehouse-vln|warehouse-vln-formal|warehouse-scene-audit|hospital-survey|hospital-map|hospital-vln|hospital-demo|hospital-web|hospital-docking|hospital-object-docking|hospital-object-web|agent|dual-agent|g1d-real-nav|g1d-home-real-nav|doctor|convert-urdf|python} [args...]"
         echo "  isaacsim     Launch the pinned MobileManiBench Isaac Sim GUI environment."
         echo "  smoke        Load one headless MobileManiBench G1/YCB environment."
         echo "  g1-d-smoke   Load and step the converted custom G1_D articulation."
@@ -204,6 +235,7 @@ case "${command_name}" in
         echo "  simple-room-vln  Navigate G1_D to a language goal in SimpleRoom (GUI by default)."
         echo "  home-vln     Navigate G1-D in the multi-zone family-home bootstrap scene."
         echo "  home-vln-formal Navigate with the reviewed scan-derived family-home map."
+        echo "  home-dual-agent Keep one Isaac app for VLN, live RGB search, alignment, and VLA handoff."
         echo "  home-assets  Convert ignored local ReplicaCAD household GLBs to Isaac USD."
         echo "  home-survey  Collect G1-D RGB across bedroom/living/dining/kitchen zones."
         echo "  home-discover Discover object labels from RGB without a category prompt list."
@@ -225,6 +257,7 @@ case "${command_name}" in
         echo "  agent        Plan or execute a task through the existing VLN and future VLA."
         echo "  dual-agent   Run the event-driven VLN-align-VLA executive (v2, fail-closed)."
         echo "  g1d-real-nav Launch fail-closed physical G1-D ROS 2/Nav2 (hardware output disabled)."
+        echo "  g1d-home-real-nav Use the rebuilt family-home map with fail-closed physical G1-D Nav2."
         echo "  doctor       Check Python, GPU, robot, USD, and official assets."
         echo "  convert-urdf Convert g1_d_description/g1_d.urdf to USD."
         echo "  python       Run a Python command inside the pinned environment."

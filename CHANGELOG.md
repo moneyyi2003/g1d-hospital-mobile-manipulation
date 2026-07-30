@@ -5,6 +5,49 @@
 
 ## 2026-07-30
 
+### 家庭正式重建、实时对象搜索与同会话精停
+
+- 用新增家庭物品后的 215 帧 G1-D RGB 重跑 LingBot；全局 Sim(3) 仅 22/215
+  对应点通过 0.45 m 门，按既有真实性边界改用推理后 pose-anchored 融合，生成
+  169 × 152、0.05 m/cell occupancy。
+- 对 Florence-2 自主发现的 14 个标签逐类运行 SAM3 并做 36 帧漂移门，生成 133 条
+  map-frame 观察、7 个语义锚点和 7 个测地 region。新增可复现人工审核策略和
+  `objects_formal.json`：5 类批准搜索/停靠，9 类因歧义、重复、错误或无三维证据拒绝。
+- 新增类别自由 live RGB 搜索 sidecar。目标类别不送入 Florence；模型完成推理后才与
+  审核对象 ID/别名匹配。Dashboard 现在区分“自主发现、已入图、可搜索/对齐、可导航、
+  可操作”状态。
+- 新增 `home-dual-agent`：v2 Executive 在同一 Isaac SimulationApp 中连续执行正式
+  `NAVIGATE -> SEARCH_OBJECT -> APPROACH_AND_ALIGN -> MANIPULATE`。每个对象保存独立
+  停靠距离/容差，二次规划只在膨胀正式 occupancy 的当前可达空间中选择面向对象的位姿。
+- 新增 `g1d-home-real-nav`，用家庭正式地图启动已有物理 G1-D ROS 2/Nav2、TF、轮里程
+  计、制动和急停链；硬件输出仍强制关闭，因为本机没有可确认的厂商驱动、真机网络、硬
+  急停回路和真实 `/scan`。
+- 修复 ROS 入口在 `set -u` 下 source Humble 环境失败，以及家庭 docking candidate
+  缺少 `clearance_m` 而无法由 `language_goal_node` 加载的问题；家庭初始位姿显式设为
+  `(0,0,0)`。
+
+验证：
+
+- 家庭测试 24/24、双脑 Agent 测试 14/14、G1-D 安全核心测试 4/4 通过；Python 和
+  shell 语法检查通过。
+- 同一 Isaac `application_id` 的实际任务：正式客厅导航误差 0.120 m；9 帧 live RGB
+  自主发现 12 类并确认 `houseplant` 4 帧、`potted plant` 3 帧；精停位置误差
+  0.030 m、对象距离 0.749 m、朝向误差 0.049 rad。
+- VLA 未交付时任务最终为 `blocked/vla_unavailable`，但
+  `pre_vla_pipeline_succeeded=true`、`same_simulation_app=true`，未误报抓取成功。
+- 家庭物理 bringup 实际展开并加载 169 × 152 地图；安全桥报告
+  `disarmed + estop_latched + hardware_output=False`，语言目标节点成功保持运行。
+  由于没有真实轮反馈和 `/scan`，`odom -> AGV_link` 不存在、Nav2 等待 TF，符合当前
+  真机前置条件。
+
+已知限制：
+
+- live RGB 只确认静态扫描对象仍可见；物体移动后的米制三维重定位尚未实现。
+- 本轮远距离巡检批准的 5 类主要是家具/地标，均为
+  `manipulation_ready=false`；小型可抓取物体需增加近距离巡检。
+- 家庭精停仍为 `stable_assisted`，尚未通过纯轮地接触三次回归；物理真机输出也未因
+  软件接口完成而解锁。
+
 ### 并行双脑协同 Agent v2 框架
 
 - 新增 `g1d_dual_brain_agent/`，不删除或替换原 `g1d_agent/`。新 Executive 以

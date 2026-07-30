@@ -10,9 +10,11 @@ RGB-only 建图、SAM3.1 语义投影、正式地点审核和 occupancy 替换�
 完成过 G1-D RGB 巡检、LingBot RGB-only 点云/occupancy、SAM3.1 投影、region 和正式
 网页。现已加入不带类别语义的 ReplicaCAD 家庭物品，并完成新版 215 帧重巡检和
 Florence-2 无类别清单自主发现：621 条原始检测经跨帧门接受 14 个标签，包括新增
-`houseplant` 和 `monitor`。物品版本改变后旧正式图按设计失效；当前唯一近期仿真主线是
-用这批新 RGB 重跑 LingBot/SAM3/semantic/region/地点审核，而不是用预设地图、资产名称
-或坐标补齐；真机主线仍是把
+`houseplant` 和 `monitor`。现已用这批 RGB 重跑 LingBot/SAM3/semantic/region 并完成
+地点和对象审核；正式对象目录批准 5 类搜索/停靠对象、地图形成 7 个语义 region。同一
+Isaac SimulationApp 内的 `NAVIGATE -> live SEARCH_OBJECT -> APPROACH_AND_ALIGN`
+已实测通过，随后在缺少 VLA 时正确阻塞。当前唯一近期仿真主线是改善近距离巡检以识别
+可抓取小物体并做家庭纯轮地接触回归；真机主线仍是把
 fail-closed ROS 2/Nav2 接口接到已确认的实体 G1-D 厂商驱动、硬急停和真实定位传感器，
 在外部条件到位前不得打开硬件输出。
 Hospital TCP dashboard 已能在浏览器同步显示 Isaac chase camera、LingBot RGB 点云和
@@ -21,8 +23,7 @@ UDP。2026-07-23 的 WebRTC 排查仍确认：当前 AutoDL 公有云实例没�
 47998/UDP 媒体路径；该外部网络条件解决前，原生 WebRTC 页面仍会停在
 `WAITING FOR STREAM`。保留的 v1 Agent 已能做固定顺序路由；新增的并行 v2 目录已提供
 对象级共享记忆、五技能动态路由、控制权仲裁和有界重规划。它继续复用现有正式 VLN，
-但实时对象搜索、家庭精确对齐、VLA 和独立验证仍等待 live backend，不属于当前已验收
-能力。
+其中家庭实时对象搜索和精确对齐已接入同会话 backend；VLA 与独立操作验证仍未交付。
 
 ## 已完成并验证
 
@@ -141,6 +142,18 @@ UDP。2026-07-23 的 WebRTC 排查仍确认：当前 AutoDL 公有云实例没�
 - [x] 新物品版本实际重巡检成功：3750 帧、215 张 `640x360` RGB、终点
   0.119 m/0.119 rad；80 个抽样帧的自主发现产生 621 条原始检测，接受 14 类，
   `houseplant` 跨 14 帧、`monitor` 跨 2 帧。巡检和发现制品均声明未提供类别清单。
+- [x] 新物品版 LingBot 实际重跑 215 帧；全局 Sim(3) 因 22/215 inlier 被拒绝后，
+  使用明确标注 pose-anchored 融合重建 169 × 152、0.05 m/cell occupancy。
+- [x] SAM3 对 14 个自主标签逐类运行并做 36 帧漂移门；7 类形成 map-frame 锚点和
+  7 个 region。审核批准 `table/houseplant/couch/stool/coffee table` 进入
+  `objects_formal.json`，拒绝歧义、重复、错误和无三维证据标签；地点仍只批准客厅沙发。
+- [x] 家庭 v2 Agent 在一个 Isaac SimulationApp 内完成正式 VLN、9 帧实时 RGB
+  类别自由搜索和对象精停：导航误差 0.120 m，live 检出 `houseplant` 4 帧和
+  `potted plant` 3 帧，精停误差 0.030 m、对象距离 0.749 m、朝向误差 0.049 rad；
+  最后按设计阻塞于 `VLA_UNAVAILABLE`。
+- [x] 新增 `g1d-home-real-nav`，把重建家庭 map/places 接到已有 ROS 2/Nav2、TF、
+  轮里程计、制动和急停边界；由于厂商驱动/真机网络/硬急停/真实 `/scan` 均不可用，
+  该入口继续强制硬件输出关闭。
 
 ## 当前问题
 
@@ -164,27 +177,23 @@ UDP。2026-07-23 的 WebRTC 排查仍确认：当前 AutoDL 公有云实例没�
   单独配置，不能复用官方 G1 平行夹爪动作空间。
 - [ ] **P1：VLA backend 尚未交付。** v1/v2 的 VLA 插槽都会 fail-closed 为
   `blocked`；需要 VLA 团队提供权重、预处理、相机协议、G1-D 动作映射、依赖环境和成功
-  判据。v2 还需接入 `search_object`、`approach_and_align` 和 `verify_task` live
-  method，并在同一 Isaac SimulationApp 完成连续操作。
+  判据。家庭 v2 的 `search_object` 和 `approach_and_align` 已接入；仍需
+  `manipulate/verify_task` 并完成真正操作闭环。
 - [ ] **P1：VLA 启动门尚无实时 provider。** `interaction_profiles.json` 当前仅有
   provisional 红色方块拿取配置；仍需在同一 Isaac 会话接入头部/右腕相机、SAM3 +
   metric depth/TF、底盘速度、右臂 IK 与碰撞结果，并用实测标定距离区间。
-- [ ] **P1：物体精确停靠仍依赖已知物体位姿和 assisted 控制。** demo 方块现已是带
-  碰撞和质量的动态刚体，但还没有抓取/抬升控制与成功判据；后续仍需 RGB 物体检测/跟踪
-  和末端视觉伺服。当前结果不能表述为纯轮地接触或 OpenVLA 抓取验收。
+- [ ] **P1：家庭物体精确停靠仍使用静态扫描锚点和 assisted 控制。** live RGB 会确认
+  目标仍可见，但尚不能为被移动物体重新估计米制三维位姿；动态物体仍需 RGB 多视角/
+  深度/TF 重定位和末端视觉伺服。当前结果不能表述为纯轮地接触或 OpenVLA 抓取验收。
 - [ ] **P1：物体停靠实时控制台当前只启用 Hospital runner。** 场景 profile 和前端切换
   接口已经存在，但 SimpleRoom 或其他场景仍需各自的 USD 加载、坐标系/起点、物体生成、
   地图与 live publisher 验证；不能把仅有 profile 名称视为多场景运行成功。
 - [ ] **P1：MobileManiBench 官方 G1/YCB smoke 仍缺完整资产。**
   2026-07-28 `./mobilemanibench.sh doctor` 为 12/15；项目 G1-D 和已有房间资产可用，
   但官方 G1/YCB/完整 `Assets.zip` 检查未通过，不能执行官方 reset/step 验收。
-- [ ] **P1：新增家庭物品后的正式图尚未重建。** 新巡检和 category-free 发现已通过，
-  但 LingBot/SAM3/semantic/region/地点库仍是旧物品版本；runner 会按物品集签名
-  fail-closed。必须运行 `home-map` 并审核自主标签的 mask/map-frame 证据，不能复用
-  旧 occupancy 或读取预设物体坐标。
-- [ ] **P1：家庭 region 目前只有一个语义锚点。** 算法已按正式 occupancy 和检测锚点
-  做测地划分，但因仅沙发通过，当前只有一个 region ID；至少三类新增语义证据通过后再
-  验收多区域划分。
+- [ ] **P1：家庭远距离巡检尚未稳定发现可抓取小物体。** 当前 5 个审核对象主要是家具/
+  地标，`manipulation_ready=false`；杯、碗、遥控器等需要增加近距离巡检视角并重新走
+  category-free 发现、SAM3 投影和人工审核，不能从资产真值补录。
 - [ ] **P1：家庭场景尚未做纯轮地接触验收。** 当前导航与巡检是
   `stable_assisted`；正式地图完成后，需要在家庭门洞和家具附近做
   `--wheel-physics-only` 连续三次导航、制动和姿态门槛验证。
@@ -196,14 +205,16 @@ UDP。2026-07-23 的 WebRTC 排查仍确认：当前 AutoDL 公有云实例没�
 
 ## 下一步执行计划
 
-### 0. 家庭自主发现后的正式地图重建（唯一近期仿真下一步）
+### 0. 家庭近距离小物体覆盖和纯轮回归（唯一近期仿真下一步）
 
 - [x] 加入真实尺度家庭物品并重新运行 `home-assets -> home-survey -> home-discover`。
-- 运行 `home-map`，分别人工检查自主发现标签的 SAM3 首见帧和 mask；每类必须有
+- [x] 运行 `home-map`，分别人工检查自主发现标签的 SAM3 首见帧和 mask；每类必须有
   稳定 map-frame 证据，晚期跟踪漂移不得进入地点审核。
-- 只从匹配类别的语义锚点附近生成 footprint-safe、可达、面向物体的 docking pose；
+- [x] 只从匹配类别的语义锚点附近生成 footprint-safe、可达、面向物体的 docking pose；
   未检出类别继续 rejected。
-- 三类地点通过后验收多 region，再以 `--wheel-physics-only` 连续三次验证家庭路线。
+- [x] 7 类锚点完成多 region 验收；同会话 live 搜索/精停通过。
+- 增加台面/床头近距离 RGB 巡检段，让可抓取小物体占据足够像素，再重建对象目录。
+- 以 `--wheel-physics-only` 连续三次验证家庭正式路线、精停、制动和姿态门槛。
 
 ### 0. Hospital 三视图演示使用方式
 

@@ -7,9 +7,13 @@ import numpy as np
 
 from family_home_vln.formal_mapping import (
     SEMANTIC_LABELS,
+    build_formal_object_catalog,
     build_formal_place_catalog,
     build_scan_semantic_layers,
+    plan_object_approach,
 )
+from simple_room_vln.artifacts import load_ros_grid
+from simple_room_vln.core import Pose2D
 
 
 class FamilyHomeFormalMappingTest(unittest.TestCase):
@@ -112,6 +116,9 @@ class FamilyHomeFormalMappingTest(unittest.TestCase):
             self.assertEqual(
                 payload["map"]["household_object_set_signature"], "test-signature"
             )
+            self.assertEqual(
+                sofa["docking_candidates"][0]["checks"]["clearance_m"], 0.4
+            )
 
     def test_places_require_matching_semantic_evidence(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -136,6 +143,104 @@ class FamilyHomeFormalMappingTest(unittest.TestCase):
             approved = next(item for item in payload["places"] if item["id"] == "living_room_sofa")
             self.assertEqual(approved["metadata"]["semantic_prompt"], "sofa")
             self.assertNotIn("requested_scene_pose", approved["metadata"])
+
+    def test_reviewed_objects_get_scan_derived_approach_pose(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            map_yaml, evidence, _alignment = self.make_inputs(
+                root, prompts=("book",)
+            )
+            discovery = root / "discovery.json"
+            discovery.write_text(
+                json.dumps(
+                    {
+                        "objects": [
+                            {
+                                "label": "book",
+                                "prompt_frame": 2,
+                                "frame_occurrences": 3,
+                                "raw_detection_count": 4,
+                            },
+                            {
+                                "label": "bathtub",
+                                "prompt_frame": 3,
+                                "frame_occurrences": 2,
+                                "raw_detection_count": 2,
+                            },
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            review = root / "review.json"
+            review.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "reviewer": "test",
+                        "default": {"status": "rejected", "reason": "not reviewed"},
+                        "labels": {
+                            "book": {
+                                "status": "approved",
+                                "aliases": ["书"],
+                                "object_class": "household_object",
+                                "search_standoff_m": 0.7,
+                                "alignment_tolerance_m": 0.1,
+                                "manipulation_ready": False,
+                            }
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            payload = build_formal_object_catalog(
+                map_yaml,
+                evidence,
+                discovery,
+                review,
+                root / "objects.json",
+                household_object_set_signature="objects-v1",
+            )
+
+            book = next(
+                item
+                for item in payload["objects"]
+                if item["source_label"] == "book"
+            )
+            self.assertEqual(book["status"], "approved")
+            self.assertEqual(book["map_position"]["source"], "lingbot_rgb_only_geometry+sam3.1_mask")
+            self.assertFalse(book["manipulation_ready"])
+            self.assertFalse(payload["sources"]["isaac_scene_truth_used"])
+            self.assertEqual(
+                payload["map"]["household_object_set_signature"], "objects-v1"
+            )
+            rejected = next(
+                item
+                for item in payload["objects"]
+                if item["source_label"] == "bathtub"
+            )
+            self.assertEqual(rejected["status"], "rejected")
+
+    def test_dynamic_approach_faces_anchor_at_object_specific_distance(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            map_yaml, _evidence, _alignment = self.make_inputs(root)
+            grid = load_ros_grid(map_yaml, robot_radius_m=0.4)
+            start = Pose2D(-0.3, -0.7, 0.0)
+            anchor = (-0.2, 3.6)
+
+            pose, route = plan_object_approach(
+                grid,
+                start,
+                anchor,
+                stand_off_m=0.75,
+                tolerance_m=0.08,
+            )
+
+            self.assertGreater(len(route), 1)
+            self.assertLessEqual(abs(np.hypot(pose.x - anchor[0], pose.y - anchor[1]) - 0.75), 0.1)
+            expected = np.arctan2(anchor[1] - pose.y, anchor[0] - pose.x)
+            self.assertAlmostEqual(pose.yaw, expected)
 
 
 if __name__ == "__main__":

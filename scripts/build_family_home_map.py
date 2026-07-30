@@ -16,6 +16,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from family_home_vln.formal_mapping import (  # noqa: E402
+    build_formal_object_catalog,
     build_formal_place_catalog,
     build_scan_semantic_layers,
 )
@@ -64,6 +65,7 @@ def parse_args() -> argparse.Namespace:
             "sam3",
             "project",
             "layers",
+            "objects",
             "places",
             "render",
         ),
@@ -476,6 +478,25 @@ def main() -> int:
         if args.stage == "layers":
             return 0
 
+    if args.stage in {"all", "objects"}:
+        objects = build_formal_object_catalog(
+            map_output / "map.yaml",
+            combined_observations,
+            discovery_path,
+            ROOT / "family_home_vln/object_review.json",
+            output / "objects_formal.json",
+            household_object_set_signature=OBJECT_SET_SIGNATURE,
+        )
+        approved_objects = sum(
+            item.get("status") == "approved" for item in objects["objects"]
+        )
+        print(
+            f"[Family map] objects approved={approved_objects} "
+            f"rejected={len(objects['objects']) - approved_objects}"
+        )
+        if args.stage == "objects":
+            return 0
+
     if args.stage in {"all", "places"}:
         places = build_formal_place_catalog(
             map_output / "map.yaml",
@@ -523,6 +544,7 @@ def main() -> int:
                 "sam3": str(sam3_output / "sam3_manifest.json"),
                 "semantic_observations": str(combined_observations),
                 "places": str(output / "places_formal.json"),
+                "objects": str(output / "objects_formal.json"),
             },
         }
         (output / "mapping_summary.json").write_text(
