@@ -23,7 +23,9 @@ UDP。2026-07-23 的 WebRTC 排查仍确认：当前 AutoDL 公有云实例没�
 47998/UDP 媒体路径；该外部网络条件解决前，原生 WebRTC 页面仍会停在
 `WAITING FOR STREAM`。保留的 v1 Agent 已能做固定顺序路由；新增的并行 v2 目录已提供
 对象级共享记忆、五技能动态路由、控制权仲裁和有界重规划。它继续复用现有正式 VLN，
-其中家庭实时对象搜索和精确对齐已接入同会话 backend；VLA 与独立操作验证仍未交付。
+其中家庭实时对象搜索和精确对齐已接入同会话 backend；公开 OpenVLA-7B 的实时 RGB
+诊断推理和 G1-D 单右臂 fail-closed 交接已接入。后者不生成关节命令：面向 G1-D
+微调/标定的 VLA、右臂碰撞 IK、多指手映射与独立操作验证仍未交付。
 
 ## 已完成并验证
 
@@ -81,6 +83,15 @@ UDP。2026-07-23 的 WebRTC 排查仍确认：当前 AutoDL 公有云实例没�
   method 插槽和 14 项轻量测试；缺少 live backend 时 fail-closed。
 - [x] 新增 `vlaandvln.md`，记录现有 LingBot/SAM3/语义数据库/DeepSeek 导航链、Agent
   状态机、VLA 交付接口、Isaac 同会话接管要求与真机 sim-to-real 安全步骤。
+- [x] 新增公开 OpenVLA-7B 单右臂诊断接入：隔离 Python 3.10 sidecar 读取
+  `MANIPULATE` 时刻的实时 G1-D head RGB，按官方 `bridge_orig` 合同返回
+  `[dx,dy,dz,droll,dpitch,dyaw,gripper]`；Agent 校验动作并生成右臂交接制品，但不会把
+  7 维末端增量误作 7 个 G1-D 关节角。模型未针对 G1-D 微调、动作帧/碰撞 IK/手部映射
+  未完成时强制 `execution_permitted=false`。
+- [x] 公开 OpenVLA-7B 已在既有家庭 RGB 和同一 Isaac 会话各完成一次真实推理；同会话
+  摘要为 `pre_vla_pipeline_succeeded=true`、`openvla_inference_succeeded=true`、
+  `same_simulation_app=true`，最终模型推理 1.03 s。最终图中植物仅在右上角部分可见，因此
+  新增最终帧“目标可见且未贴边截断”门，当前仍禁止关节执行。
 - [x] Agent 增加严格的“物体 + 技能”交互配置库；预抓取距离由配置显式交给既有
   `hospital-object-docking`，当前红色方块 `pick` 使用 provisional 0.80 m 推荐值和
   0.65–0.90 m 允许区间。
@@ -280,8 +291,9 @@ UDP。2026-07-23 的 WebRTC 排查仍确认：当前 AutoDL 公有云实例没�
   `ObjectObservationProvider`，据实标定并更新 provisional 距离区间。
 - 再完成右手闭合、接触判定和抬升至少 5 cm，然后替换为 YCB 物体。
 - 最终组合 `NAVIGATE -> ALIGN -> GRASP -> LIFT -> SUCCESS/FAIL` 单回合流程。
-- VLA 交付后按 `vlaandvln.md` 接入 `g1d_agent.vla_backend_v1`，先单独验收观察/动作
-  schema，再启用同一 Isaac 会话内的 `VLN -> VLA` 连续执行。
+- 公开 OpenVLA 诊断链只作为观察/动作 schema 和同会话路由基线；正式 VLA 交付后按
+  `vlaandvln.md` 替换 checkpoint 与动作统计，补齐 G1-D 右臂坐标标定、碰撞 IK 和手部
+  映射，再启用真正的 `VLN -> VLA -> VERIFY` 连续执行。
 
 ## 本次维护机制验收
 

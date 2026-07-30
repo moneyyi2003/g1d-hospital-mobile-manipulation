@@ -5,6 +5,41 @@
 
 ## 2026-07-30
 
+### 公开 OpenVLA-7B 单右臂诊断接入
+
+- 新增 `g1d_openvla/` 动作合同、checkpoint 完整性检查和 G1-D 右臂交接制品。公开
+  OpenVLA 的 7 维输出被明确解释为
+  `[dx,dy,dz,droll,dpitch,dyaw,gripper]`，不会误作 G1-D 七个右臂关节角。
+- 新增隔离的 Python 3.10 推理 sidecar 和 `openvla-infer` 入口；它只读取 RGB 与语言
+  指令、保存推理结果，永远不写底盘或机械臂控制器。若未来 checkpoint 提供
+  `dataset_statistics.json`，会按交付统计覆盖公开模型配置。
+- 家庭 v2 Agent 增加显式 `--openvla` 路径：在同一个 Isaac SimulationApp 中完成
+  正式导航、实时对象搜索和精停后，保持底盘零速度并对当时的 head RGB 运行 OpenVLA；
+  推理动作经过合同校验后才进入 fail-closed 单右臂 handoff。
+- 增加 checkpoint 未完成、动作维度错误、非有限值和“无关节命令”安全合同测试；更新
+  双脑 Agent 与 VLN/VLA 接入文档。
+
+验证：
+
+- OpenVLA 合同测试 4/4、双脑 Agent 测试 14/14、旧 Agent 测试 28/28、家庭测试
+  24/24 通过；Python 编译和 shell 语法检查通过。
+- 三个公开权重分片均通过官方 SHA-256；已有家庭 RGB 单帧推理成功，模型加载
+  6.50 s、推理 0.98 s。
+- 最终同一 `application_id=isaac-sim-625387` 的实际任务完成正式导航
+  （0.120 m 误差）、live RGB 搜索、0.749 m 对象距离精停（0.030 m 位置误差、
+  0.049 rad 朝向误差）和实时 OpenVLA 推理。Agent 摘要为
+  `pre_vla_pipeline_succeeded=true`、`openvla_inference_succeeded=true`、
+  `same_simulation_app=true`；模型加载 6.79 s、推理 1.03 s，随后按设计阻塞关节执行。
+
+已知限制：
+
+- 公开 checkpoint 使用 BridgeData 动作统计，未针对 G1-D 单臂微调或标定；当前只验收
+  模型推理和 Agent 交接，`execution_permitted=false`，不表述为伸手或抓取成功。
+- 本轮最终 OpenVLA RGB 中植物只在右上角部分可见；地图几何距离/底盘朝向合格不等于
+  操作视角合格。右臂 handoff 因而增加“最终帧目标可见且未贴边截断”安全门。
+- 正式开放执行仍需 G1-D 动作坐标系、右臂关节限位/速度约束、场景与自碰撞 IK、
+  多指手映射、独立 `VERIFY` 和可抓取小物体近距离地图证据。
+
 ### Unitree SDK2 G1-D 命令侧 ROS 2 接入
 
 - 确认本机 `unitree_sdk2` 为官方仓库 `21d0a3b`（`2.0.2-67`），包含 G1-D

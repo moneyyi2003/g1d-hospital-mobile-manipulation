@@ -15,8 +15,11 @@
 VLA 直接生成全局坐标。家庭场景已经从 215 帧 G1-D 自采 RGB 生成 LingBot 点云和
 occupancy，并接入 SAM3.1、region、地点审核与网页。新版感知先由 Florence-2 在没有
 类别清单、USD 语义或物体坐标的情况下从 G1-D RGB 自主生成标签，再由 SAM3 跟踪；旧图
-已由新增物品后的 215 帧巡检替换。当前 VLA 尚未交付，因此代码提供了明确的 backend 插槽；
-执行到 VLA 步骤时会返回 `blocked`，不会把“导航到物体旁边”误报为“抓取成功”。
+已由新增物品后的 215 帧巡检替换。正式、针对 G1-D 训练的 VLA 尚未交付；2026-07-30
+已接入公开 OpenVLA 7B 的单右臂诊断推理：它可以读取进入 MANIPULATE 时的实时机载 RGB
+并输出 7 维 Bridge 动作，但动作只写入安全 handoff，不直接写右臂关节。缺少 G1-D
+动作帧标定、碰撞 IK、多指手映射和独立验证时仍返回 `blocked`，不会把“模型出数”或
+“导航到物体旁边”误报为“抓取成功”。
 
 2026-07-30 新增的 `g1d_dual_brain_agent/` 是推荐的 v2 框架；原
 `g1d_agent/` 作为已验证的顺序基线完整保留。v2 不是让两个模型联合训练，而是：
@@ -94,6 +97,14 @@ VLA 报告动作完成                 -> VERIFY
   --headless --test --resolution 640x360 \
   --command '请带我到客厅沙发旁' \
   --target-object houseplant
+
+# 在上述同一会话边界运行公开 OpenVLA 7B 真实推理
+./mobilemanibench.sh home-dual-agent \
+  --headless --test --resolution 640x360 \
+  --command '请带我到客厅沙发旁' \
+  --target-object houseplant \
+  --openvla \
+  --openvla-instruction 'move the robot hand toward the potted plant'
 ```
 
 家庭集成不再使用 v2 的空 live method：`NAVIGATE` 读取正式 occupancy/地点，
@@ -205,10 +216,16 @@ SAM3.1 货架语义投影和正式地点审核也已完成。证据边界见
 SAM3 时间窗投影形成 7 个锚点/region，审核后批准 5 个对象用于搜索和停靠，错误或无
 三维证据标签保持 rejected。地点库仍只批准 `living_room_sofa`。
 
-2026-07-30 的实际同会话验收中，正式 VLN 到客厅误差 0.120 m；live RGB 自主输出
+2026-07-30 的前一轮同会话验收中，正式 VLN 到客厅误差 0.120 m；live RGB 自主输出
 `houseplant` 4 帧和 `potted plant` 3 帧；精停误差 0.030 m、对象距离 0.749 m、朝向
-误差 0.049 rad。随后 VLA 插槽以 `vla_unavailable` 阻塞。这证明导航—搜索—对齐已经
-连续，但不等于抓取成功，也不等于纯轮地接触或真机验收。
+误差 0.049 rad。随后旧 VLA 插槽以 `vla_unavailable` 阻塞。现在该边界可显式加
+`--openvla` 运行公开模型推理；无论是否生成动作，都仍不等于抓取成功、纯轮地接触或
+真机验收。OpenVLA 专用合同与命令见 `g1d_openvla/README.md`。
+
+公开模型同会话实测也保持上述导航/精停精度，并在 1.03 s 内从最终 RGB 返回真实
+7 维动作。不过最终帧里植物只在右上角部分可见，说明底盘面对地图锚点仍不足以保证
+手部操作视角；正式 VLA 前必须再次做目标可见性、遮挡和贴边检查，失败时回到
+`APPROACH_AND_ALIGN` 重选视点。
 
 ## 5. v1 Agent 如何做固定顺序决定
 

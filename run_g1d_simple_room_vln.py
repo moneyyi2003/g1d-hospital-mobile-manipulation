@@ -42,6 +42,8 @@ DEFAULT_HOME_OUTPUT = ROOT / "outputs/family_home_vln"
 DEFAULT_HOME_LINGBOT_MAP = DEFAULT_HOME_OUTPUT / "lingbot_map/map.yaml"
 DEFAULT_HOME_FORMAL_PLACES = DEFAULT_HOME_OUTPUT / "places_formal.json"
 DEFAULT_HOME_FORMAL_OBJECTS = DEFAULT_HOME_OUTPUT / "objects_formal.json"
+DEFAULT_OPENVLA_MODEL = ROOT / "checkpoints/openvla-7b"
+DEFAULT_OPENVLA_PYTHON = ROOT / "envs/openvla/bin/python"
 
 ROBOT_PRIM_PATH = "/World/G1_D"
 LEFT_WHEEL_JOINT = "Left_Wheel_Joint"
@@ -103,6 +105,31 @@ def parse_args() -> argparse.Namespace:
         default=9,
         help="category-free live RGB views captured by SEARCH_OBJECT",
     )
+    parser.add_argument(
+        "--openvla",
+        action="store_true",
+        help=(
+            "run a real OpenVLA inference at MANIPULATE; raw Bridge action "
+            "remains fail-closed until G1-D IK/collision mapping is available"
+        ),
+    )
+    parser.add_argument(
+        "--openvla-model",
+        type=Path,
+        default=DEFAULT_OPENVLA_MODEL,
+    )
+    parser.add_argument(
+        "--openvla-python",
+        type=Path,
+        default=DEFAULT_OPENVLA_PYTHON,
+    )
+    parser.add_argument("--openvla-unnorm-key", default="bridge_orig")
+    parser.add_argument(
+        "--openvla-instruction",
+        default="",
+        help="optional English manipulation instruction for the base checkpoint",
+    )
+    parser.add_argument("--openvla-timeout-sec", type=float, default=900.0)
     parser.add_argument("--allow-bootstrap", action="store_true",
                         help="Explicitly allow measured Isaac geometry for demo-only navigation")
     parser.add_argument("--steps", type=int, default=0)
@@ -132,6 +159,10 @@ def parse_args() -> argparse.Namespace:
 args = parse_args()
 if args.live_dir is not None and not args.live_dir.is_absolute():
     args.live_dir = ROOT / args.live_dir
+for openvla_path_name in ("openvla_model", "openvla_python"):
+    openvla_path = getattr(args, openvla_path_name)
+    if not openvla_path.is_absolute():
+        setattr(args, openvla_path_name, ROOT / openvla_path)
 if args.scene_profile == "family-home":
     if args.output_dir == DEFAULT_OUTPUT:
         args.output_dir = DEFAULT_HOME_OUTPUT
@@ -151,6 +182,10 @@ if args.survey:
         args.steps = 6000
 if args.dual_agent:
     args.no_camera = False
+if args.openvla and not args.dual_agent:
+    raise SystemExit("--openvla requires --dual-agent")
+if args.openvla_timeout_sec <= 0.0:
+    raise SystemExit("--openvla-timeout-sec must be positive")
 
 try:
     camera_width, camera_height = (int(item) for item in args.resolution.lower().split("x", 1))
@@ -980,6 +1015,207 @@ class FamilyHomeDualAgentSession:
             (update,),
         )
 
+    def manipulate_openvla(self, command, _memory):
+        """Infer one OpenVLA action, then stop at the G1-D safety boundary."""
+
+        from g1d_dual_brain_agent.models import (
+            FailureCode,
+            SkillResult,
+            SkillStatus,
+        )
+        from g1d_openvla import (
+            OpenVlaAction,
+            build_g1d_right_arm_handoff,
+            inspect_checkpoint,
+        )
+
+        if self.camera is None:
+            return SkillResult(
+                command.command_id,
+                SkillStatus.BLOCKED,
+                "OpenVLA requires the live G1-D RGB camera.",
+                FailureCode.UNSUPPORTED_SKILL,
+            )
+        if not args.openvla_python.is_file():
+            return SkillResult(
+                command.command_id,
+                SkillStatus.BLOCKED,
+                f"OpenVLA Python is missing: {args.openvla_python}",
+                FailureCode.VLA_UNAVAILABLE,
+            )
+        checkpoint = inspect_checkpoint(args.openvla_model)
+        if not checkpoint.ready:
+            return SkillResult(
+                command.command_id,
+                SkillStatus.BLOCKED,
+                (
+                    "OpenVLA checkpoint is incomplete: "
+                    f"{checkpoint.actual_bytes}/{checkpoint.expected_bytes} bytes"
+                ),
+                FailureCode.VLA_UNAVAILABLE,
+                {
+                    "model": str(args.openvla_model),
+                    "missing_files": list(checkpoint.missing_files),
+                },
+            )
+
+        target = load_reviewed_object(args.objects, command.target_id)
+        root = self.output_dir / "openvla" / time.strftime("%Y%m%dT%H%M%SZ")
+        root.mkdir(parents=True, exist_ok=True)
+        image_path = root / "head_rgb.png"
+        result_path = root / "inference.json"
+        handoff_path = root / "g1d_right_arm_handoff.json"
+        log_path = root / "sidecar.log"
+        self.robot.apply_wheel_actions(np.zeros(2, dtype=np.float32))
+        app_utils.update_app(steps=5)
+        if not save_camera_rgb(self.camera, image_path):
+            return SkillResult(
+                command.command_id,
+                SkillStatus.FAILED,
+                "G1-D RGB camera produced no OpenVLA observation.",
+                FailureCode.ADAPTER_ERROR,
+                {"application_id": self.application_id},
+            )
+
+        instruction = args.openvla_instruction.strip() or (
+            f"move the robot hand toward the {target['source_label']}"
+        )
+        process_args = [
+            str(args.openvla_python),
+            str(ROOT / "scripts/run_openvla_inference.py"),
+            "--model",
+            str(args.openvla_model),
+            "--image",
+            str(image_path),
+            "--instruction",
+            instruction,
+            "--unnorm-key",
+            args.openvla_unnorm_key,
+            "--output",
+            str(result_path),
+        ]
+        child_env = os.environ.copy()
+        for key in (
+            "PYTHONHOME",
+            "PYTHONEXECUTABLE",
+            "__PYVENV_LAUNCHER__",
+            "_PYTHON_SYSCONFIGDATA_NAME",
+        ):
+            child_env.pop(key, None)
+        child_env["PYTHONNOUSERSITE"] = "1"
+        child_env["TRANSFORMERS_OFFLINE"] = "1"
+        child_env["HF_HUB_OFFLINE"] = "1"
+        child_env["HF_HOME"] = str(ROOT / ".cache/huggingface")
+        child_env["PYTHONPATH"] = str(ROOT)
+        child_env["PATH"] = os.pathsep.join(
+            [str(args.openvla_python.parent), "/usr/local/bin", "/usr/bin", "/bin"]
+        )
+        conda_lib = str(args.openvla_python.parent.parent / "lib")
+        child_env["LD_LIBRARY_PATH"] = os.pathsep.join(
+            [
+                conda_lib,
+                *[
+                    item
+                    for item in child_env.get("LD_LIBRARY_PATH", "").split(
+                        os.pathsep
+                    )
+                    if item and "isaacsim/kit" not in item
+                ],
+            ]
+        )
+        timed_out = False
+        with log_path.open("w", encoding="utf-8") as log:
+            process = subprocess.Popen(
+                process_args,
+                cwd=ROOT,
+                stdout=log,
+                stderr=subprocess.STDOUT,
+                text=True,
+                env=child_env,
+            )
+            started = time.monotonic()
+            while process.poll() is None and simulation_app.is_running():
+                self.robot.apply_wheel_actions(np.zeros(2, dtype=np.float32))
+                simulation_app.update()
+                if time.monotonic() - started > args.openvla_timeout_sec:
+                    process.terminate()
+                    try:
+                        process.wait(timeout=15)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
+                        process.wait(timeout=15)
+                    timed_out = True
+                    break
+            if process.poll() is None:
+                process.terminate()
+                try:
+                    process.wait(timeout=15)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait(timeout=15)
+        if timed_out or process.returncode != 0 or not result_path.is_file():
+            return SkillResult(
+                command.command_id,
+                SkillStatus.FAILED,
+                (
+                    "OpenVLA inference timed out."
+                    if timed_out
+                    else f"OpenVLA sidecar failed with code {process.returncode}."
+                ),
+                FailureCode.ADAPTER_ERROR,
+                {
+                    "application_id": self.application_id,
+                    "log": str(log_path),
+                    "image": str(image_path),
+                },
+            )
+
+        inference = json.loads(result_path.read_text(encoding="utf-8"))
+        action = OpenVlaAction.from_values(
+            inference.get("action", []),
+            unnorm_key=args.openvla_unnorm_key,
+        )
+        handoff = build_g1d_right_arm_handoff(action)
+        handoff.update(
+            {
+                "application_id": self.application_id,
+                "inference_artifact": str(result_path),
+                "observation_image": str(image_path),
+                "instruction": instruction,
+                "target_object": {
+                    "object_id": target["object_id"],
+                    "source_label": target["source_label"],
+                    "manipulation_ready": bool(target["manipulation_ready"]),
+                },
+            }
+        )
+        if not target["manipulation_ready"]:
+            handoff["blocked_reasons"].append(
+                "reviewed_object_is_search_and_docking_only_not_manipulation_ready"
+            )
+        handoff_path.write_text(
+            json.dumps(handoff, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        return SkillResult(
+            command.command_id,
+            SkillStatus.BLOCKED,
+            (
+                "OpenVLA produced a real 7-D action from live RGB, but the "
+                "Bridge action was not sent to G1-D joints because calibrated "
+                "right-arm IK, collision checking and hand mapping are absent."
+            ),
+            FailureCode.UNSUPPORTED_SKILL,
+            {
+                "application_id": self.application_id,
+                "openvla_inference_succeeded": True,
+                "inference": str(result_path),
+                "handoff": str(handoff_path),
+                "log": str(log_path),
+                "action": action.to_dict(),
+            },
+        )
+
 
 def run_dual_agent_session(session: FamilyHomeDualAgentSession) -> dict:
     from g1d_dual_brain_agent.executive import DualBrainExecutive
@@ -1006,13 +1242,19 @@ def run_dual_agent_session(session: FamilyHomeDualAgentSession) -> dict:
         SkillKind.APPROACH_ALIGN,
         CallableSkillExecutor(session.approach_and_align),
     )
-    skills.register(
-        SkillKind.MANIPULATE,
-        UnavailableSkillExecutor(
+    if args.openvla:
+        skills.register(
             SkillKind.MANIPULATE,
-            "VLA checkpoint/plugin has not been delivered",
-        ),
-    )
+            CallableSkillExecutor(session.manipulate_openvla),
+        )
+    else:
+        skills.register(
+            SkillKind.MANIPULATE,
+            UnavailableSkillExecutor(
+                SkillKind.MANIPULATE,
+                "OpenVLA is disabled; pass --openvla to run diagnostic inference",
+            ),
+        )
     mission = Mission(
         mission_id=f"family-home-{int(time.time())}",
         instruction=(
@@ -1065,6 +1307,15 @@ def run_dual_agent_session(session: FamilyHomeDualAgentSession) -> dict:
             for event in payload["events"]
         )
         for prefix in ("同一 Isaac 会话已到达", "live RGB confirmed", "G1-D aligned")
+    )
+    payload["openvla_inference_succeeded"] = any(
+        event.get("type") == "skill_finished"
+        and event.get("payload", {})
+        .get("result", {})
+        .get("details", {})
+        .get("openvla_inference_succeeded")
+        is True
+        for event in payload["events"]
     )
     return payload
 
@@ -1293,11 +1544,17 @@ def main() -> int:
             "Dual-agent result: "
             f"status={payload['status']} "
             f"pre_vla_pipeline_succeeded={payload['pre_vla_pipeline_succeeded']} "
+            f"openvla_inference_succeeded={payload['openvla_inference_succeeded']} "
             f"same_simulation_app={payload['same_simulation_app']}"
         )
         print(f"Summary: {summary_path}")
-        # Until the VLA arrives, reaching its fail-closed slot is the expected
-        # end condition for this integration test.
+        if args.openvla:
+            return (
+                0
+                if payload["pre_vla_pipeline_succeeded"]
+                and payload["openvla_inference_succeeded"]
+                else 5
+            )
         return 0 if payload["pre_vla_pipeline_succeeded"] else 4
 
     follower = PathFollower(

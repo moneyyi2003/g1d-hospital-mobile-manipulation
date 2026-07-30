@@ -12,8 +12,9 @@
 - VLN 继续调用现有场景 adapter。家庭场景仍是
   `home-vln-formal`，使用 G1-D 自采 RGB、LingBot RGB-only、SAM3、semantic、
   region、审核地点和正式 occupancy；Agent 不换用现成真值地图，也不生成任意坐标。
-- `SEARCH_OBJECT`、家庭场景精确 `APPROACH_AND_ALIGN`、VLA 和独立
-  `VERIFY` 没有 live backend 时一律 `blocked`，不会用固定物体坐标或假结果补齐。
+- 家庭 `SEARCH_OBJECT` 和精确 `APPROACH_AND_ALIGN` 已有同会话实现。公开
+  OpenVLA 7B 现在可读取实时 head RGB 并生成动作，但在 G1-D 动作帧、碰撞 IK、
+  多指手映射和独立 `VERIFY` 完成前仍 fail-closed，不会把推理成功写成操作成功。
 
 ## 运行结构
 
@@ -108,6 +109,22 @@ Mission
 应生成新的 ID，而不是删除旧输出。
 
 ## VLA 文件到达后的接入
+
+当前可先运行公开 OpenVLA 的单右臂诊断链：
+
+```bash
+./mobilemanibench.sh home-dual-agent \
+  --headless --test --resolution 640x360 \
+  --command '请带我到客厅沙发旁' \
+  --target-object houseplant \
+  --openvla \
+  --openvla-instruction 'move the robot hand toward the potted plant'
+```
+
+这条命令在同一 Isaac 会话完成导航、实时搜索和对齐，然后由隔离 sidecar 对当前
+机载 RGB 做真实 OpenVLA 推理。返回的 7 维值按末端增量合同保存，绝不会直接当作
+G1-D 七个右臂关节角。具体制品、环境和开放执行前的门槛见
+`g1d_openvla/README.md`。
 
 仍可使用旧配置的 factory 机制：
 
