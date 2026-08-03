@@ -9,6 +9,8 @@ import math
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+
 from lingbot_nav.mapping.semantic_map import load_ros_occupancy
 from lingbot_nav.place_catalog_builder import map_bundle_sha256
 from simple_room_vln.artifacts import load_ros_grid
@@ -27,7 +29,10 @@ SEMANTIC_LABELS = tuple(PROMPT_BY_PLACE.values())
 PROMPT_ALIASES_BY_PLACE = {
     "living_room_sofa": ("sofa", "couch"),
     "bedroom_bed": ("bed", "mattress"),
-    "dining_area": ("dining table", "dinner table"),
+    # The category-free model called the dining table a "desk" in frames
+    # 167-172. This alias is added only after RGB review; it was not supplied
+    # to Florence during discovery.
+    "dining_area": ("dining table", "dinner table", "desk"),
     "kitchen_counter": ("kitchen counter", "kitchen countertop", "countertop"),
 }
 
@@ -87,20 +92,28 @@ def _place_evidence(
     return PROMPT_BY_PLACE[place_id], []
 
 
-def _anchor(items: list[dict[str, Any]]) -> tuple[float, float]:
+def _anchor_xyz(items: list[dict[str, Any]]) -> tuple[float, float, float]:
     if not items:
         raise ValueError("semantic anchor requires at least one observation")
     weighted_x = []
     weighted_y = []
+    weighted_z = []
     for item in items:
         centroid = item["centroid_xyz"]
         weight = max(1, min(20, int(item.get("point_count", 1)) // 100))
         weighted_x.extend([float(centroid[0])] * weight)
         weighted_y.extend([float(centroid[1])] * weight)
+        weighted_z.extend([float(centroid[2])] * weight)
     weighted_x.sort()
     weighted_y.sort()
+    weighted_z.sort()
     middle = len(weighted_x) // 2
-    return weighted_x[middle], weighted_y[middle]
+    return weighted_x[middle], weighted_y[middle], weighted_z[middle]
+
+
+def _anchor(items: list[dict[str, Any]]) -> tuple[float, float]:
+    x, y, _z = _anchor_xyz(items)
+    return x, y
 
 
 def _nearest_free_cell(cells, row: int, col: int) -> tuple[int, int] | None:
@@ -277,6 +290,7 @@ def plan_object_approach(
     *,
     stand_off_m: float,
     tolerance_m: float,
+    preferred_view_bearing_rad: float | None = None,
 ) -> tuple[Pose2D, list[tuple[float, float]]]:
     """Plan a footprint-safe object-facing base pose from a live robot pose.
 
@@ -291,13 +305,25 @@ def plan_object_approach(
     reachable = _reachable_cells(grid, start_cell)
     if not reachable:
         raise ValueError("current G1-D pose is not in reachable formal free space")
-    candidates: list[tuple[float, float, float, float]] = []
+    candidates: list[tuple[float, float, float, float, float]] = []
     for row, col in reachable:
         x, y = grid.cell_to_world((row, col))
         distance = math.dist((x, y), anchor)
         if abs(distance - stand_off_m) <= max(tolerance_m, grid.resolution):
+            bearing = math.atan2(y - anchor[1], x - anchor[0])
+            bearing_error = (
+                abs(
+                    math.atan2(
+                        math.sin(bearing - preferred_view_bearing_rad),
+                        math.cos(bearing - preferred_view_bearing_rad),
+                    )
+                )
+                if preferred_view_bearing_rad is not None
+                else 0.0
+            )
             candidates.append(
                 (
+                    bearing_error,
                     abs(distance - stand_off_m),
                     math.dist((start.x, start.y), (x, y)),
                     x,
@@ -308,7 +334,7 @@ def plan_object_approach(
         raise ValueError(
             "no footprint-safe reachable base pose satisfies the object stand-off"
         )
-    _distance_error, _travel_hint, x, y = min(candidates)
+    _bearing_error, _distance_error, _travel_hint, x, y = min(candidates)
     pose = Pose2D(x, y, math.atan2(anchor[1] - y, anchor[0] - x))
     route = grid.plan((start.x, start.y), (pose.x, pose.y))
     return pose, route
@@ -322,6 +348,7 @@ def build_formal_object_catalog(
     output_file: Path,
     *,
     household_object_set_signature: str = "",
+    triangulated_anchors_file: Path | None = None,
 ) -> dict[str, Any]:
     """Build a reviewed object memory without reading Isaac scene truth."""
 
@@ -339,6 +366,12 @@ def build_formal_object_catalog(
         for item in discovery.get("objects", [])
     }
     policies = review.get("labels", {})
+    triangulated = {}
+    if triangulated_anchors_file is not None:
+        triangulation_payload = json.loads(
+            triangulated_anchors_file.read_text(encoding="utf-8")
+        )
+        triangulated = dict(triangulation_payload.get("objects", {}))
     default_policy = dict(review.get("default", {}))
     objects: list[dict[str, Any]] = []
     approved_index = 0
@@ -354,6 +387,14 @@ def build_formal_object_catalog(
         if status == "approved" and not evidence:
             status = "rejected"
             reason = "review policy approved the label but no gated map-frame evidence exists"
+        manipulation_ready = bool(policy.get("manipulation_ready", False))
+        metric_anchor = triangulated.get(label)
+        if status == "approved" and manipulation_ready and metric_anchor is None:
+            status = "rejected"
+            reason = (
+                "manipulation-ready object has no reviewed multiview metric "
+                "triangulation"
+            )
         base = {
             "source_label": label,
             "aliases": list(dict.fromkeys([label, *policy.get("aliases", [])])),
@@ -374,9 +415,63 @@ def build_formal_object_catalog(
             objects.append(base)
             continue
         approved_index += 1
-        anchor = _anchor(evidence)
+        anchor_xyz = (
+            tuple(float(value) for value in metric_anchor["point_xyz_m"])
+            if metric_anchor is not None
+            else _anchor_xyz(evidence)
+        )
+        anchor = anchor_xyz[:2]
         stand_off = float(policy["search_standoff_m"])
         tolerance = float(policy["alignment_tolerance_m"])
+        camera_origins = (
+            [
+                frame.get("camera_origin_map_m", ())
+                for frame in metric_anchor.get("frames", [])
+                if isinstance(frame, dict)
+            ]
+            if metric_anchor is not None
+            else []
+        )
+        camera_origins = [
+            origin
+            for origin in camera_origins
+            if isinstance(origin, (list, tuple)) and len(origin) >= 2
+        ]
+        preferred_view_bearing_rad = (
+            math.atan2(
+                float(np.median([origin[1] for origin in camera_origins]))
+                - anchor[1],
+                float(np.median([origin[0] for origin in camera_origins]))
+                - anchor[0],
+            )
+            if camera_origins
+            else None
+        )
+        camera_forward_offset_m = (
+            float(
+                metric_anchor.get("camera_calibration", {}).get(
+                    "forward_offset_m", 0.0
+                )
+            )
+            if metric_anchor is not None
+            else 0.0
+        )
+        visibility_standoff_m = (
+            float(
+                np.median(
+                    [
+                        math.dist(
+                            (float(origin[0]), float(origin[1])),
+                            anchor,
+                        )
+                        for origin in camera_origins
+                    ]
+                )
+                + camera_forward_offset_m
+            )
+            if camera_origins
+            else stand_off
+        )
         try:
             pose, route = plan_object_approach(
                 grid,
@@ -384,6 +479,15 @@ def build_formal_object_catalog(
                 anchor,
                 stand_off_m=stand_off,
                 tolerance_m=tolerance,
+                preferred_view_bearing_rad=preferred_view_bearing_rad,
+            )
+            visibility_pose, visibility_route = plan_object_approach(
+                grid,
+                START_POSE,
+                anchor,
+                stand_off_m=visibility_standoff_m,
+                tolerance_m=max(tolerance, 0.08),
+                preferred_view_bearing_rad=preferred_view_bearing_rad,
             )
         except ValueError as exc:
             objects.append(
@@ -412,8 +516,13 @@ def build_formal_object_catalog(
                 "map_position": {
                     "x": anchor[0],
                     "y": anchor[1],
+                    "z": anchor_xyz[2],
                     "frame_id": "map",
-                    "source": "lingbot_rgb_only_geometry+sam3.1_mask",
+                    "source": (
+                        "reviewed_sam3_mask_multiview_ray_triangulation"
+                        if metric_anchor is not None
+                        else "lingbot_rgb_only_geometry+sam3.1_mask"
+                    ),
                 },
                 "approach": {
                     "pose": {
@@ -423,14 +532,29 @@ def build_formal_object_catalog(
                         "frame_id": "map",
                     },
                     "stand_off_m": stand_off,
+                    "visibility_pose": {
+                        "x": visibility_pose.x,
+                        "y": visibility_pose.y,
+                        "yaw": visibility_pose.yaw,
+                        "frame_id": "map",
+                    },
+                    "visibility_standoff_m": visibility_standoff_m,
+                    "visibility_path_length_from_survey_start_m": path_length(
+                        visibility_route
+                    ),
                     "alignment_tolerance_m": tolerance,
                     "planned_path_length_from_survey_start_m": path_length(route),
                     "faces_object_anchor": True,
+                    "preferred_view_bearing_rad": preferred_view_bearing_rad,
+                    "view_bearing_source": (
+                        "reviewed_rgb_survey_visibility_rays"
+                        if preferred_view_bearing_rad is not None
+                        else "unavailable"
+                    ),
                     "footprint_radius_m": ROBOT_RADIUS_M,
                 },
-                "manipulation_ready": bool(
-                    policy.get("manipulation_ready", False)
-                ),
+                "manipulation_ready": manipulation_ready,
+                "metric_triangulation": metric_anchor,
                 "track_ids": sorted(
                     {str(item.get("track_id", "")) for item in evidence}
                 ),
@@ -449,6 +573,11 @@ def build_formal_object_catalog(
             "discovery": str(discovery_file),
             "semantic_observations": str(semantic_observations),
             "review_policy": str(review_file),
+            "triangulated_anchors": (
+                str(triangulated_anchors_file)
+                if triangulated_anchors_file is not None
+                else None
+            ),
             "isaac_scene_truth_used": False,
         },
         "objects": objects,

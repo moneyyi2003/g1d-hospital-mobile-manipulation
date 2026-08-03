@@ -12,9 +12,10 @@
 - VLN 继续调用现有场景 adapter。家庭场景仍是
   `home-vln-formal`，使用 G1-D 自采 RGB、LingBot RGB-only、SAM3、semantic、
   region、审核地点和正式 occupancy；Agent 不换用现成真值地图，也不生成任意坐标。
-- 家庭 `SEARCH_OBJECT` 和精确 `APPROACH_AND_ALIGN` 已有同会话实现。公开
-  OpenVLA 7B 现在可读取实时 head RGB 并生成动作，但在 G1-D 动作帧、碰撞 IK、
-  多指手映射和独立 `VERIFY` 完成前仍 fail-closed，不会把推理成功写成操作成功。
+- 家庭 `SEARCH_OBJECT`、两级 `APPROACH_AND_ALIGN`、单右臂仿真拿取和独立
+  `VERIFY` 已有同会话实现。公开 OpenVLA 7B 可读取通过门控的 head RGB 并生成动作，
+  但未标定 BridgeData 动作不直接写入 G1-D 关节；当前执行是审核锚点驱动的有界位置
+  IK 和透明标注的 PhysX 固定约束。
 
 ## 运行结构
 
@@ -99,6 +100,18 @@ Mission
 ./mobilemanibench.sh dual-agent \
   --mission g1d_dual_brain_agent/mission.example.json
 ```
+
+家庭审核语法也可直接编译“去—拿—返回”，并在一个 Isaac 会话执行：
+
+```bash
+./mobilemanibench.sh home-task \
+  --headless --test --resolution 640x360 \
+  --command '请带我去餐厅，拿杯子，再回到客厅沙发旁'
+```
+
+只有 `VERIFY` 取得杯体至少抬升 0.05 m、稳定保持 30 帧的证据后，Executive 才写入
+`carried_object_id` 并允许返回导航。公开 OpenVLA 动作、候选抓取或单纯闭手都不能
+越过该门。
 
 默认输出：
 

@@ -210,6 +210,7 @@ class FamilyHomeFormalMappingTest(unittest.TestCase):
             self.assertEqual(book["status"], "approved")
             self.assertEqual(book["map_position"]["source"], "lingbot_rgb_only_geometry+sam3.1_mask")
             self.assertFalse(book["manipulation_ready"])
+            self.assertIn("z", book["map_position"])
             self.assertFalse(payload["sources"]["isaac_scene_truth_used"])
             self.assertEqual(
                 payload["map"]["household_object_set_signature"], "objects-v1"

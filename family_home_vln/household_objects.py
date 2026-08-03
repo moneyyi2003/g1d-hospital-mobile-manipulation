@@ -33,6 +33,7 @@ class HouseholdObject:
     # ReplicaCAD GLB files are Y-up. Bounds are source-space meters.
     minimum_xyz: tuple[float, float, float]
     maximum_xyz: tuple[float, float, float]
+    dynamic: bool = False
 
     @property
     def source_path(self) -> Path:
@@ -98,6 +99,7 @@ HOUSEHOLD_OBJECTS = (
         0.50,
         (-0.055642, -0.034010, -0.055580),
         (0.077712, 0.044990, 0.055434),
+        True,
     ),
     HouseholdObject(
         "dining_bowl",
@@ -176,6 +178,8 @@ def object_set_signature() -> str:
             "position_xy": item.position_xy,
             "support_height_above_floor_m": item.support_height_above_floor_m,
             "yaw_deg": item.yaw_deg,
+            "mass_kg": item.mass_kg,
+            "dynamic": item.dynamic,
         }
         for item in HOUSEHOLD_OBJECTS
     ]

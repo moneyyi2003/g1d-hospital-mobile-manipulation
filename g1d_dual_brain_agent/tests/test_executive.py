@@ -239,6 +239,75 @@ class DualBrainExecutiveTest(unittest.TestCase):
         )
         self.assertEqual(scripted.calls, [])
 
+    def test_return_navigation_requires_verified_carried_object(self) -> None:
+        scripted = ScriptedSkills()
+        mission = Mission(
+            "mission-return-guard",
+            "回到客厅",
+            (
+                TaskGoal(
+                    "return-home",
+                    GoalKind.NAVIGATE,
+                    "living_room_sofa",
+                    payload_object_id="cup-03",
+                    metadata={"requires_carried_object_id": "cup-03"},
+                ),
+            ),
+        )
+
+        result = DualBrainExecutive(
+            make_registry(scripted),
+            SharedWorldMemory(),
+        ).execute(mission)
+
+        self.assertEqual(result.status, MissionStatus.BLOCKED)
+        self.assertEqual(
+            result.memory["blackboard"]["last_failure_code"],
+            FailureCode.OBJECT_SLIPPED.value,
+        )
+        self.assertEqual(scripted.calls, [])
+
+    def test_pick_verification_unlocks_return_navigation(self) -> None:
+        scripted = ScriptedSkills()
+        mission = Mission(
+            "mission-pick-return",
+            "拿杯子再回到客厅",
+            (
+                TaskGoal(
+                    "pick-cup",
+                    GoalKind.INTERACT,
+                    "拿杯子",
+                    target_id="cup-03",
+                    action="pick",
+                    success_condition="杯子已抬升并保持",
+                ),
+                TaskGoal(
+                    "return-home",
+                    GoalKind.NAVIGATE,
+                    "living_room_sofa",
+                    payload_object_id="cup-03",
+                    metadata={"requires_carried_object_id": "cup-03"},
+                ),
+            ),
+        )
+
+        result = DualBrainExecutive(
+            make_registry(scripted),
+            SharedWorldMemory(),
+        ).execute(mission)
+
+        self.assertEqual(result.status, MissionStatus.SUCCEEDED)
+        self.assertEqual(
+            [call.kind for call in scripted.calls],
+            [
+                SkillKind.SEARCH_OBJECT,
+                SkillKind.APPROACH_ALIGN,
+                SkillKind.MANIPULATE,
+                SkillKind.VERIFY,
+                SkillKind.NAVIGATE,
+            ],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

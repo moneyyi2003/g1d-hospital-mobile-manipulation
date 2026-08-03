@@ -107,6 +107,24 @@ class DualBrainExecutive:
 
             goal = mission.goals[board.current_goal_index]
             progress = board.progress_for(goal.goal_id)
+            required_carried_object = str(
+                goal.metadata.get("requires_carried_object_id", "")
+            ).strip()
+            if (
+                goal.kind is GoalKind.NAVIGATE
+                and required_carried_object
+                and board.carried_object_id != required_carried_object
+            ):
+                return self._terminal(
+                    mission,
+                    MissionStatus.BLOCKED,
+                    (
+                        f"{goal.goal_id} 要求携带 {required_carried_object}，"
+                        f"但共享记忆当前携带对象为 "
+                        f"{board.carried_object_id or '空'}；拒绝执行返回导航。"
+                    ),
+                    FailureCode.OBJECT_SLIPPED,
+                )
             board.active_object_id = (
                 goal.target_id if goal.kind is GoalKind.INTERACT else ""
             )

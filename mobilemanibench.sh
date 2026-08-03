@@ -36,6 +36,15 @@ case "${command_name}" in
         exec "${ENV_DIR}/bin/python" scripts/g1_d_smoke.py \
             --usd "${WORKSPACE_DIR}/Assets/g1_d/g1_d.usd" "$@"
         ;;
+    g1d-arm-probe)
+        exec "${WORKSPACE_DIR}/isaacsim/python.sh" \
+            "${WORKSPACE_DIR}/run_g1d_simple_room_vln.py" \
+            --allow-bootstrap \
+            --headless \
+            --no-camera \
+            --right-arm-probe \
+            --output-dir "${WORKSPACE_DIR}/outputs/g1d_arm_probe" "$@"
+        ;;
     vln)
         exec "${ENV_DIR}/bin/python" scripts/g1_d_vln.py \
             --usd "${WORKSPACE_DIR}/Assets/g1_d/g1_d.usd" "$@"
@@ -66,6 +75,19 @@ case "${command_name}" in
             "${WORKSPACE_DIR}/run_g1d_simple_room_vln.py" \
             --scene-profile family-home \
             --dual-agent \
+            --output-dir "${WORKSPACE_DIR}/outputs/family_home_vln" \
+            --map "${WORKSPACE_DIR}/outputs/family_home_vln/lingbot_map/map.yaml" \
+            --places "${WORKSPACE_DIR}/outputs/family_home_vln/places_formal.json" \
+            --objects "${WORKSPACE_DIR}/outputs/family_home_vln/objects_formal.json" "$@"
+        ;;
+    home-task)
+        exec "${WORKSPACE_DIR}/isaacsim/python.sh" \
+            "${WORKSPACE_DIR}/run_g1d_simple_room_vln.py" \
+            --scene-profile family-home \
+            --dual-agent \
+            --family-task \
+            --openvla \
+            --execute-sim-pick \
             --output-dir "${WORKSPACE_DIR}/outputs/family_home_vln" \
             --map "${WORKSPACE_DIR}/outputs/family_home_vln/lingbot_map/map.yaml" \
             --places "${WORKSPACE_DIR}/outputs/family_home_vln/places_formal.json" \
@@ -242,7 +264,7 @@ case "${command_name}" in
         exec "${ENV_DIR}/bin/python" "$@"
         ;;
     help|-h|--help)
-        echo "Usage: ./mobilemanibench.sh {isaacsim|smoke|g1-d-smoke|vln|simple-room-vln|home-vln|home-vln-formal|home-dual-agent|openvla-infer|home-assets|home-survey|home-discover|home-map|home-web|warehouse-survey|warehouse-map|warehouse-vln|warehouse-vln-formal|warehouse-scene-audit|hospital-survey|hospital-map|hospital-vln|hospital-demo|hospital-web|hospital-docking|hospital-object-docking|hospital-object-web|agent|dual-agent|g1d-real-nav|g1d-home-real-nav|doctor|convert-urdf|python} [args...]"
+        echo "Usage: ./mobilemanibench.sh {isaacsim|smoke|g1-d-smoke|g1d-arm-probe|vln|simple-room-vln|home-vln|home-vln-formal|home-dual-agent|home-task|openvla-infer|home-assets|home-survey|home-discover|home-map|home-web|warehouse-survey|warehouse-map|warehouse-vln|warehouse-vln-formal|warehouse-scene-audit|hospital-survey|hospital-map|hospital-vln|hospital-demo|hospital-web|hospital-docking|hospital-object-docking|hospital-object-web|agent|dual-agent|g1d-real-nav|g1d-home-real-nav|doctor|convert-urdf|python} [args...]"
         echo "  isaacsim     Launch the pinned MobileManiBench Isaac Sim GUI environment."
         echo "  smoke        Load one headless MobileManiBench G1/YCB environment."
         echo "  g1-d-smoke   Load and step the converted custom G1_D articulation."
@@ -251,6 +273,8 @@ case "${command_name}" in
         echo "  home-vln     Navigate G1-D in the multi-zone family-home bootstrap scene."
         echo "  home-vln-formal Navigate with the reviewed scan-derived family-home map."
         echo "  home-dual-agent Keep one Isaac app for VLN, live RGB search, alignment, and VLA handoff."
+        echo "  home-task    Compile one reviewed Chinese go-pick-return command in the same Isaac app."
+        echo "  g1d-arm-probe Run a bounded simulation-only right-palm Jacobian IK motion probe."
         echo "  openvla-infer Run one isolated OpenVLA RGB+instruction inference (never writes joints)."
         echo "  home-assets  Convert ignored local ReplicaCAD household GLBs to Isaac USD."
         echo "  home-survey  Collect G1-D RGB across bedroom/living/dining/kitchen zones."

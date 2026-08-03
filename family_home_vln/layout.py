@@ -288,10 +288,21 @@ def build_survey_path(grid: GridMap) -> list[tuple[float, float]]:
             places["living_room_sofa"].pose.y,
         ),
         (-1.20, 3.35),
+        # Approach the media cabinet head-on so small objects occupy more RGB
+        # pixels than they do in the room-scale transit views.
+        (-0.20, 2.45),
+        (-0.20, 2.80),
+        (0.25, 2.35),
+        # Approach the dining tabletop from the south. The final segment points
+        # the head RGB camera toward the cup/bowl instead of sweeping past them.
+        (2.05, 1.55),
         (
             places["dining_area"].pose.x,
             places["dining_area"].pose.y,
         ),
+        (1.55, 2.08),
+        (2.55, 2.08),
+        (2.05, 1.55),
         (
             places["kitchen_counter"].pose.x,
             places["kitchen_counter"].pose.y,

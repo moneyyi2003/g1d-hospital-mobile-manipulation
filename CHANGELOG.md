@@ -3,6 +3,44 @@
 本文件记录能够影响复现、行为、接口或任务状态的重要变更。日期使用 UTC；生成物刷新和
 无行为影响的小改动不单独记录。
 
+## 2026-08-03
+
+### 家庭去—拿—返回同会话闭环
+
+- 新增可审计的家庭长任务编译器，把“去地点—拿物体—返回地点”解析为审核
+  `place_id/object_id/place_id`，返回导航只有在 `VERIFY` 写入匹配
+  `carried_object_id` 后才放行。
+- 将家庭巡检扩展到 19 个 waypoint、292 张 `1280x720` RGB。Florence-2 在没有类别
+  清单、USD 语义或物体坐标输入时接受 29 个自主标签；LingBot/SAM3 29/29 提示完成，
+  生成 170 × 154 occupancy、399 条 map-frame 观察和 18 个语义锚点/region。
+- 新增 reviewed SAM3 mask 多视角射线三角化。杯子使用 7 帧 RGB mask、0.183 m
+  相机基线得到正式三维锚点，中位射线误差 0.016 m；对象审核将其标记为唯一
+  `manipulation_ready=true` 杯子。
+- `APPROACH_AND_ALIGN` 增加扫描可见方位与机械臂可达位两级停靠、3 航向 × 3 俯角
+  RGB 门控，以及同会话 `SEARCH_OBJECT` 合格图像的 120 秒 freshness 备份。
+- 新增仿真单右臂有界 DLS 位置 IK、G1-D 多指手目标、URDF 指尖包络门、连续坐标系
+  PhysX 固定约束和实际抬升/稳定保持验证。公开 OpenVLA BridgeData 动作仍只作建议，
+  不直接写入 G1-D 关节。
+
+验证：
+
+- 指令“请带我去餐厅，拿杯子，再回到客厅沙发旁”在同一个
+  `application_id=isaac-sim-122461` 中成功。去程 3.581 m/904 帧；操作停靠
+  0.766 m/0.049 rad；杯体抬升 0.293 m 并稳定 30 帧；回程 4.237 m/946 帧；
+  掌心—杯体携带距离漂移 0.00019 m。摘要同时为
+  `pre_vla_pipeline_succeeded=true`、`openvla_inference_succeeded=true`、
+  `same_simulation_app=true`。
+- 家庭测试 28/28、双脑 Agent 测试 20/20、OpenVLA 合同测试 4/4 通过；
+  Python 编译、shell 语法和 `git diff --check` 通过。
+
+已知限制：
+
+- 本次为 `stable_assisted` Isaac 数字孪生原型，`hardware_output=false`；
+  家庭纯轮地接触和实体 G1-D 均未验收。
+- 右臂 IK 只控制位置，`scene_collision_query=false`；抓取依赖显式固定约束，尚未完成
+  末端姿态、场景/自碰撞、真实接触抓取和放置。
+- 公开 OpenVLA 未按 G1-D/家庭数据标定；不能把模型推理成功解释为模型直接控制了手臂。
+
 ## 2026-07-30
 
 ### 公开 OpenVLA-7B 单右臂诊断接入

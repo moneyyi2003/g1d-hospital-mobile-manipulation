@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 from typing import Any, Callable
 
@@ -104,8 +105,101 @@ def search_live_rgb(
     return result
 
 
+def manipulation_view_gate(
+    search_result: dict[str, Any],
+    capture_manifest: dict[str, Any],
+    *,
+    image_size: tuple[int, int],
+    edge_margin_ratio: float = 0.08,
+    minimum_area_ratio: float = 0.004,
+    maximum_area_ratio: float = 0.55,
+) -> dict[str, Any]:
+    """Select a manipulation-safe live view from category-free detections.
+
+    The gate uses the bounding boxes produced before target-name matching.  It
+    does not consume simulator coordinates or USD semantics.  A target touching
+    the image edge is rejected even when SEARCH_OBJECT found it, because such a
+    view is unsuitable for a downstream VLA policy.
+    """
+
+    width, height = image_size
+    if width <= 0 or height <= 0:
+        raise ValueError("image dimensions must be positive")
+    if not 0.0 <= edge_margin_ratio < 0.5:
+        raise ValueError("edge_margin_ratio must be in [0, 0.5)")
+    if not 0.0 < minimum_area_ratio < maximum_area_ratio <= 1.0:
+        raise ValueError("invalid manipulation area-ratio bounds")
+
+    frames = {
+        int(item.get("frame", -1)): item
+        for item in capture_manifest.get("frames", [])
+        if isinstance(item, dict)
+    }
+    candidates: list[dict[str, Any]] = []
+    margin_x = width * edge_margin_ratio
+    margin_y = height * edge_margin_ratio
+    image_area = float(width * height)
+    for match in search_result.get("live_matches", []):
+        example = match.get("example", {})
+        bbox = [float(value) for value in example.get("bbox", [])]
+        frame_index = int(example.get("frame_index", -1))
+        if len(bbox) != 4 or frame_index not in frames:
+            continue
+        x1, y1, x2, y2 = bbox
+        area_ratio = (
+            max(0.0, x2 - x1) * max(0.0, y2 - y1) / image_area
+        )
+        edge_clear = (
+            x1 >= margin_x
+            and y1 >= margin_y
+            and x2 <= width - margin_x
+            and y2 <= height - margin_y
+        )
+        area_clear = minimum_area_ratio <= area_ratio <= maximum_area_ratio
+        center_error = math.hypot(
+            ((x1 + x2) / 2.0 - width / 2.0) / width,
+            ((y1 + y2) / 2.0 - height / 2.0) / height,
+        )
+        candidates.append(
+            {
+                "frame_index": frame_index,
+                "bbox": bbox,
+                "area_ratio": area_ratio,
+                "edge_clear": edge_clear,
+                "area_clear": area_clear,
+                "center_error": center_error,
+                "robot_pose": frames[frame_index].get("robot_pose", {}),
+                "camera_downward_pitch_deg": frames[frame_index].get(
+                    "camera_downward_pitch_deg"
+                ),
+            }
+        )
+    safe = [
+        item
+        for item in candidates
+        if item["edge_clear"] and item["area_clear"]
+    ]
+    safe.sort(key=lambda item: (item["center_error"], -item["area_ratio"]))
+    selected = safe[0] if safe else None
+    return {
+        "ready": selected is not None,
+        "failure_code": "" if selected is not None else "bad_viewpoint",
+        "reason": (
+            "target_bbox_inside_manipulation_view_gate"
+            if selected is not None
+            else "no_live_target_bbox_clears_edge_and_scale_gates"
+        ),
+        "edge_margin_ratio": edge_margin_ratio,
+        "minimum_area_ratio": minimum_area_ratio,
+        "maximum_area_ratio": maximum_area_ratio,
+        "selected": selected,
+        "candidates": candidates,
+    }
+
+
 __all__ = [
     "load_reviewed_object",
+    "manipulation_view_gate",
     "match_live_discovery",
     "search_live_rgb",
 ]

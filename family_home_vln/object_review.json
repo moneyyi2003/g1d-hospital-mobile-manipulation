@@ -75,6 +75,35 @@
       "alignment_tolerance_m": 0.1,
       "manipulation_ready": false
     },
+    "cup": {
+      "status": "approved",
+      "object_class": "portable_household_object",
+      "aliases": ["杯子", "水杯", "cup", "mug"],
+      "search_standoff_m": 0.68,
+      "alignment_tolerance_m": 0.06,
+      "manipulation_ready": true
+    },
+    "coffee cup": {
+      "status": "approved",
+      "object_class": "portable_household_object",
+      "aliases": ["杯子", "水杯", "coffee cup", "cup", "mug"],
+      "search_standoff_m": 0.68,
+      "alignment_tolerance_m": 0.06,
+      "manipulation_ready": true,
+      "metric_localization": {
+        "sam3_prompt": "mug",
+        "start_frame": 168,
+        "end_frame_exclusive": 175,
+        "downward_pitch_deg": 25.0,
+        "minimum_camera_baseline_m": 0.08,
+        "maximum_median_ray_error_m": 0.05,
+        "review_reason": "frames 168-174 continuously mask the same dining cup before later tracker drift to the bowl"
+      }
+    },
+    "mug": {
+      "status": "rejected",
+      "reason": "duplicate Florence label for the same dining cup reviewed under coffee cup"
+    },
     "monitor": {
       "status": "rejected",
       "reason": "autonomous RGB label is plausible but SAM3 produced no gated map-frame observation"

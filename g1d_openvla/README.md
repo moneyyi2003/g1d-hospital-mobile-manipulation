@@ -19,13 +19,14 @@ BridgeData 动作，不能证明它能零样本控制 G1-D。
 同一 Isaac SimulationApp
   NAVIGATE
   -> live SEARCH_OBJECT
-  -> APPROACH_AND_ALIGN
-  -> 保存当前 G1-D head_rgb
+  -> 扫描可见方位 + 机械臂可达位的两级 APPROACH_AND_ALIGN
+  -> 保存通过 bbox 边缘/尺度门控的 G1-D head_rgb
   -> 隔离 Python 3.10 sidecar 加载 OpenVLA 7B
   -> 返回真实 7-D action
   -> OpenVlaAction 校验
   -> G1-D 右臂 handoff
-  -> 因缺少最终帧目标可见性复核、标定动作帧、碰撞 IK 和多指手映射而 fail-closed
+  -> 可选仿真原型：审核三维锚点 + 有界位置 IK + 多指手目标 + PhysX 固定约束
+  -> 独立 VERIFY 检查杯体抬升和稳定保持
 ```
 
 推理 sidecar 不导入 Isaac，也永远不写关节。Isaac 主进程在等待时继续更新仿真并保持
@@ -64,6 +65,14 @@ shard 必须完整；入口会根据 `model.safetensors.index.json` 检查文件
   --openvla-instruction 'move the robot hand toward the potted plant'
 ```
 
+完整“去餐区—拿杯—返回”仿真原型：
+
+```bash
+./mobilemanibench.sh home-task \
+  --headless --test --resolution 640x360 \
+  --command '请带我去餐厅，拿杯子，再回到客厅沙发旁'
+```
+
 成功时会生成：
 
 - `openvla/<timestamp>/head_rgb.png`：进入 MANIPULATE 时的实时机载图像；
@@ -71,11 +80,10 @@ shard 必须完整；入口会根据 `model.safetensors.index.json` 检查文件
 - `g1d_right_arm_handoff.json`：动作语义、安全门和未生成关节命令的原因；
 - `sidecar.log`：模型加载和推理日志。
 
-Agent 此时仍以 `blocked` 结束，但运行入口在
-`pre_vla_pipeline_succeeded=true` 且 `openvla_inference_succeeded=true` 时返回
-成功码。这表示“导航—搜索—对齐—模型推理”通过，不表示抓取或伸手通过。
-当前 `houseplant` 也只是审核过的搜索/停靠对象，
-`manipulation_ready=false`；它用于验证链路和观察模型输出，不是抓取验收物。
+`home-dual-agent` 面向 `houseplant` 时仍只验证导航—搜索—对齐—推理，因为该对象
+`manipulation_ready=false`。`home-task` 只有解析到审核为
+`manipulation_ready=true` 的杯子时才允许仿真拿取，并且必须由实际杯体抬升至少
+0.05 m、稳定保持至少 30 帧后才能放行携物返回。
 
 2026-07-30 最终实测同一 `application_id=isaac-sim-625387` 完成四阶段，OpenVLA 对最终
 实时 RGB 输出
@@ -83,6 +91,12 @@ Agent 此时仍以 `blocked` 结束，但运行入口在
 6.79 s、推理 1.03 s。最终图中的植物只在右上角部分出现，因此这个结果也暴露了
 “地图几何对齐不等于操作视角对齐”；当前 handoff 明确把最终帧目标可见性复核列为
 未通过的安全门。
+
+2026-08-03 实测 `application_id=isaac-sim-122461` 完成完整家庭长任务。OpenVLA
+读取通过实时 bbox 门控的杯子 RGB；仿真执行没有使用其未标定的笛卡尔增量，而是使用
+扫描锚点驱动的有界右臂位置 IK 和显式固定约束。杯体抬升 0.293 m、稳定 30 帧，随后
+携杯导航 4.237 m 到客厅沙发旁，掌心—杯体距离漂移 0.00019 m。该结果明确标记
+`hardware_output=false`、`scene_collision_query=false`。
 
 ## 开放右臂动作前必须补齐
 

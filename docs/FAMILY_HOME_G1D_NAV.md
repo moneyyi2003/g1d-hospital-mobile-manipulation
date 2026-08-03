@@ -1,6 +1,6 @@
 # G1-D 稍复杂家庭场景导航
 
-更新时间：2026-07-30（UTC）
+更新时间：2026-08-03（UTC）
 
 ## 1. 场景选择与边界
 
@@ -70,8 +70,8 @@ MobileManiBench 配置中虽有更完整的家庭资产名称，但本机缺少�
 - Florence-2 自己生成了哪些物体名称、跨多少帧、是否已由 SAM3 投影入图及是否可导航。
 
 网页只接受 Point Cloud、Semantic、Occupancy、Region 四层都存在的正式 bundle；任一
-文件缺失即拒绝启动，不会退回 bootstrap。当前审核只开放“客厅沙发旁”，所以网页不会
-执行卧室、餐桌和操作台指令，但会在识别报告中保留它们的 0 检测和拒绝原因。页面首屏、
+文件缺失即拒绝启动，不会退回 bootstrap。当前审核开放“客厅沙发旁”和“餐区”，卧室与
+厨房操作台仍因语义/覆盖证据不足保持拒绝。页面首屏、
 状态和识别报告不等待 Isaac；只有提交导航指令后才冷启动 Isaac，因此 RTX 画面会晚于
 网页本身出现。
 
@@ -103,12 +103,23 @@ Agent 只生成任务计划：
   --target-object houseplant
 ```
 
-该命令由 v2 Executive 依次取得底盘控制租约并执行 `NAVIGATE`、实时
-`SEARCH_OBJECT`、`APPROACH_AND_ALIGN`，最后交给 VLA 插槽。搜索阶段在当前机器人
+可执行“去—拿—返回”完整原型：
+
+```bash
+./mobilemanibench.sh home-task \
+  --headless --test --resolution 640x360 \
+  --command '请带我去餐厅，拿杯子，再回到客厅沙发旁'
+```
+
+命令由 v2 Executive 依次取得底盘/右臂/右手控制租约并执行 `NAVIGATE`、实时
+`SEARCH_OBJECT`、`APPROACH_AND_ALIGN`、`MANIPULATE`、`VERIFY`。搜索阶段在当前机器人
 位置用机载 RGB 拍摄 9 个视角，Florence-2 仍只接收 RGB 和任务 token；目标名称只在
 推理完成后用于匹配审核对象目录。Isaac 应用在外部 Python 3.10 感知 sidecar 推理时保持
-存活和制动，不重载场景。当前 VLA 未交付，因此预 VLA 三步通过后最终状态仍应为
-`blocked/vla_unavailable`。
+存活和制动，不重载场景。杯子先在 1.11 m 的扫描可见方位做 3 航向 × 3 俯角 RGB
+门控，再沿正式 occupancy 收近到约 0.68 m 的机械臂工作位。公开 OpenVLA 的动作未按
+G1-D 标定，因此只作策略建议；仿真执行由审核三维锚点、有界单臂位置 IK、G1-D 多指手
+目标和显式 PhysX 固定约束完成，并用实际抬升/稳定持有验证。该路径
+`hardware_output=false`，不代表正式 VLA 或实体机器人抓取。
 
 ## 3. 已完成的 Isaac 验证
 
@@ -146,6 +157,16 @@ Agent 只生成任务计划：
   `potted plant`（3 帧）；对象精停位置误差 0.030 m、底盘到对象锚点 0.749 m、朝向
   误差 0.049 rad。三步 `application_id` 相同，随后按设计
   `blocked/vla_unavailable`。
+- 2026-08-03 新版近距离巡检采集 292 张 `1280x720` RGB；Florence 在 160 个抽样帧
+  产生 1302 条原始检测并接受 29 个自主标签。LingBot/SAM3 正式流水线形成
+  170 × 154 occupancy、399 条投影观察、18 个语义锚点/region、5 个审核对象和
+  2 个审核地点。
+- `coffee cup` 的正式三维锚点由 7 帧 reviewed SAM3 mask 与巡检相机射线三角化得到，
+  使用 0.183 m 相机基线，中位射线误差 0.016 m；没有读取 USD 语义或物体坐标。
+- 指令“请带我去餐厅，拿杯子，再回到客厅沙发旁”在同一
+  `application_id=isaac-sim-122461` 成功。去程 3.581 m/904 帧；杯子实时 RGB bbox
+  在 35° 俯角通过门控，底盘到扫描锚点 0.766 m；杯体实际抬升 0.293 m、稳定保持
+  30 帧；回程 4.237 m/946 帧，掌心—杯体距离漂移 0.00019 m。
 
 以上导航使用 `stable_assisted`，用于稳定验证语言目标、地图、规划、相机和 Agent
 高层链路。它会写轮速，同时以确定性平面位姿更新保证回归，不等于家庭场景已经通过
@@ -187,8 +208,8 @@ Agent 只生成任务计划：
 
 `FamilyHomeVlnAdapter` 让任务级 Agent 把家庭地点指令交给现有 VLN。语言只选择审核
 `place_id`，不生成任意坐标。`home-dual-agent` 已把 live RGB 搜索和家庭对象精停接到
-v2 Executive；VLA 和独立操作验证尚未接好，因此只在 `MANIPULATE` 明确 `blocked`，
-不会把“到达并对齐”误报为“已经抓取”。
+v2 Executive；`home-task` 进一步接入仿真单右臂位置 IK、显式抓取约束和独立抬升验证。
+公开 OpenVLA 仍不是 G1-D 标定控制器，其输出不会直接写入关节。
 
 VLA 到货后，应在同一 Isaac SimulationApp 中保持场景、机器人、相机与时间连续：
 

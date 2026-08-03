@@ -1,6 +1,6 @@
 # G1-D 的 VLN + VLA Agent 设计与接入说明
 
-更新时间：2026-07-30（UTC）
+更新时间：2026-08-03（UTC）
 
 ## 1. 目标和当前状态
 
@@ -12,14 +12,20 @@
 
 现有 Hospital VLN 是正式语义导航基线；多货架 Warehouse 和多区域家庭场景复用相同的
 地图/地点/规划/路径跟随组件，并通过独立场景 adapter 接入 Agent，不会让语言模型或
-VLA 直接生成全局坐标。家庭场景已经从 215 帧 G1-D 自采 RGB 生成 LingBot 点云和
-occupancy，并接入 SAM3.1、region、地点审核与网页。新版感知先由 Florence-2 在没有
+VLA 直接生成全局坐标。家庭场景最初从 215 帧 G1-D 自采 RGB 建图；随后增加餐桌、媒体柜
+近距离巡检段，并实际采集 292 张 `1280x720` RGB；Florence-2 从 160 个抽样帧产生
+1302 条原始检测、接受 29 个自主标签，其中包含 `coffee cup`、`mug` 和 `bowl`。
+新版感知先由 Florence-2 在没有
 类别清单、USD 语义或物体坐标的情况下从 G1-D RGB 自主生成标签，再由 SAM3 跟踪；旧图
-已由新增物品后的 215 帧巡检替换。正式、针对 G1-D 训练的 VLA 尚未交付；2026-07-30
+已由新增物品后的 292 帧巡检正式替换。SAM3 29/29 提示完成，生成 170 × 154
+occupancy、399 条投影观察、18 个语义锚点/region、5 个审核对象和 2 个审核地点。
+杯子锚点来自 7 帧 reviewed mask 的 RGB 多视角射线三角化。正式、针对 G1-D 训练的
+VLA 尚未交付；2026-07-30
 已接入公开 OpenVLA 7B 的单右臂诊断推理：它可以读取进入 MANIPULATE 时的实时机载 RGB
-并输出 7 维 Bridge 动作，但动作只写入安全 handoff，不直接写右臂关节。缺少 G1-D
-动作帧标定、碰撞 IK、多指手映射和独立验证时仍返回 `blocked`，不会把“模型出数”或
-“导航到物体旁边”误报为“抓取成功”。
+并输出 7 维 Bridge 动作，但动作只写入安全 handoff，不直接写右臂关节。2026-08-03
+另完成透明标注的仿真操作原型：审核三维锚点驱动有界单右臂位置 IK，G1-D 多指手闭合后
+用显式 PhysX 固定约束保持杯子，并由杯体抬升和稳定窗口独立验证。它不是正式 OpenVLA
+关节控制，也没有场景/自碰撞查询。
 
 2026-07-30 新增的 `g1d_dual_brain_agent/` 是推荐的 v2 框架；原
 `g1d_agent/` 作为已验证的顺序基线完整保留。v2 不是让两个模型联合训练，而是：
@@ -105,6 +111,11 @@ VLA 报告动作完成                 -> VERIFY
   --target-object houseplant \
   --openvla \
   --openvla-instruction 'move the robot hand toward the potted plant'
+
+# 审核中文长任务：去地点 -> 拿物体 -> 验证持有 -> 携物返回
+./mobilemanibench.sh home-task \
+  --headless --test --resolution 640x360 \
+  --command '请带我去餐厅，拿杯子，再回到客厅沙发旁'
 ```
 
 家庭集成不再使用 v2 的空 live method：`NAVIGATE` 读取正式 occupancy/地点，
@@ -113,6 +124,19 @@ VLA 报告动作完成                 -> VERIFY
 LingBot+SAM3 得到的锚点及对象专属距离，在正式膨胀 occupancy 上重新选取从当前位姿
 可达的 SE(2) 停靠位。三种技能在同一进程内共享机器人、相机、场景和
 `application_id`；只有视觉模型运行在隔离的 Python 3.10 sidecar。
+
+`home-task` 只接受可审计的“去—拿—返回”语法，并把三个短语分别解析到审核
+`place_id/object_id/place_id`；语言层不会生成坐标。返回目标带有
+`requires_carried_object_id`，只有 `VERIFY` 获得物体至少抬升 0.05 m、连续稳定持有
+30 帧的物理证据后，Agent 才写入 `carried_object_id` 并放行返回导航。仅有 OpenVLA
+动作向量、候选抓取或内存里的 `candidate_held` 都不能越过这个门。
+
+此外，`APPROACH_AND_ALIGN` 先从 reviewed 巡检射线恢复目标曾经可见的方位，在扫描
+可见距离采集 3 个航向 × 3 个俯角的实时 RGB，运行不带类别清单的 Florence 检测，再用
+目标框的画面边距和尺度做 VLA handoff 门控；随后沿正式 occupancy 收近到机械臂工作
+距离。目标贴边、被截断、过小或过大都会返回 `BAD_VIEWPOINT`。若同一次
+`SEARCH_OBJECT` 已有通过同一门槛的 RGB，允许在 120 秒 freshness 内作为检测抖动的
+备份，但必须是同一对象、同一会话的真实图像。
 
 ## 3. 保留的 v1 顺序基线结构
 
@@ -209,12 +233,11 @@ Warehouse 的 bootstrap 和正式 occupancy 路线都已在 `--wheel-physics-onl
 SAM3.1 货架语义投影和正式地点审核也已完成。证据边界见
 `docs/WAREHOUSE_G1D_NAV.md`。
 
-家庭场景由卧室、客厅、餐区和厨房组成。新增无语义家庭实体后已重新完成
-19.285 m G1-D RGB 巡检和 215 帧
-`640x360` 采集。LingBot 只读取这批 RGB，推理后采用明确标注的 pose-anchored 米制
-融合，新图为 169 × 152、0.05 m/cell occupancy。Florence-2 接受 14 个跨帧标签；
-SAM3 时间窗投影形成 7 个锚点/region，审核后批准 5 个对象用于搜索和停靠，错误或无
-三维证据标签保持 rejected。地点库仍只批准 `living_room_sofa`。
+家庭场景由卧室、客厅、餐区和厨房组成。最新版巡检覆盖 19 个 waypoint，采集 292 张
+`1280x720` RGB。LingBot 只读取这些 RGB，推理后采用明确标注的 pose-anchored 米制
+融合；正式图为 170 × 154、0.05 m/cell occupancy。Florence-2 接受 29 个跨帧标签，
+SAM3 形成 18 个锚点/region；审核批准 5 个对象和
+`living_room_sofa/dining_area` 两个地点，错误或无三维证据标签保持 rejected。
 
 2026-07-30 的前一轮同会话验收中，正式 VLN 到客厅误差 0.120 m；live RGB 自主输出
 `houseplant` 4 帧和 `potted plant` 3 帧；精停误差 0.030 m、对象距离 0.749 m、朝向
@@ -226,6 +249,17 @@ SAM3 时间窗投影形成 7 个锚点/region，审核后批准 5 个对象用�
 7 维动作。不过最终帧里植物只在右上角部分可见，说明底盘面对地图锚点仍不足以保证
 手部操作视角；正式 VLA 前必须再次做目标可见性、遮挡和贴边检查，失败时回到
 `APPROACH_AND_ALIGN` 重选视点。
+
+2026-08-03 完整长任务实测为 `status=succeeded`：
+
+- 去餐区 3.581 m、904 帧；
+- 扫描可见停靠后在 35° 俯角确认杯子，再收近到 0.766 m；
+- OpenVLA 推理成功，但未标定 action 不直接写关节；
+- 单右臂 IK 与显式仿真约束把杯体抬升 0.293 m，稳定保持 30 帧；
+- 携杯返回沙发 4.237 m、946 帧，掌心—杯体距离漂移 0.00019 m。
+
+该结果只验收 `stable_assisted` 数字孪生和仿真操作原型，不能表述为家庭纯轮地接触、
+碰撞安全操作、正式 VLA 控制或实体 G1-D 运动验收。
 
 ## 5. v1 Agent 如何做固定顺序决定
 

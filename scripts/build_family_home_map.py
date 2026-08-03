@@ -27,6 +27,9 @@ from family_home_vln.discovery import (  # noqa: E402
     validate_survey,
 )
 from family_home_vln.household_objects import OBJECT_SET_SIGNATURE  # noqa: E402
+from family_home_vln.rgb_triangulation import (  # noqa: E402
+    triangulate_reviewed_sam3_track,
+)
 from lingbot_nav.errors import ConfigurationError  # noqa: E402
 from lingbot_nav.mapping.alignment import (  # noqa: E402
     align_lingbot_to_survey,
@@ -72,6 +75,11 @@ def parse_args() -> argparse.Namespace:
         default="all",
     )
     parser.add_argument("--mode", choices=("streaming", "windowed"), default="streaming")
+    parser.add_argument("--lingbot-num-scale-frames", type=int, default=8)
+    parser.add_argument("--lingbot-keyframe-interval", type=int, default=1)
+    parser.add_argument("--lingbot-kv-cache-window", type=int, default=64)
+    parser.add_argument("--lingbot-window-size", type=int, default=64)
+    parser.add_argument("--lingbot-overlap-size", type=int, default=16)
     parser.add_argument("--resolution", type=float, default=0.05)
     parser.add_argument("--inlier-threshold", type=float, default=0.45)
     parser.add_argument(
@@ -140,6 +148,70 @@ def _combine_observations(paths: list[Path], target: Path) -> dict:
     return result
 
 
+def _build_reviewed_metric_object_anchors(
+    survey_manifest: Path,
+    sam3_manifest: Path,
+    review_file: Path,
+    output_file: Path,
+) -> dict:
+    """Triangulate explicitly reviewed portable-object mask windows."""
+
+    review = _read_json(review_file)
+    sam3 = _read_json(sam3_manifest)
+    sessions = {
+        str(item.get("prompt", "")).casefold(): Path(
+            item["artifact_directory"]
+        )
+        for item in sam3.get("prompts", [])
+    }
+    objects = {}
+    for label, policy in review.get("labels", {}).items():
+        localization = policy.get("metric_localization")
+        if (
+            policy.get("status") != "approved"
+            or policy.get("manipulation_ready") is not True
+            or not isinstance(localization, dict)
+        ):
+            continue
+        prompt = str(localization["sam3_prompt"]).casefold()
+        if prompt not in sessions:
+            raise ValueError(
+                f"metric localization for {label!r} needs SAM3 prompt {prompt!r}"
+            )
+        result = triangulate_reviewed_sam3_track(
+            survey_manifest,
+            sessions[prompt],
+            start_frame=int(localization["start_frame"]),
+            end_frame_exclusive=int(localization["end_frame_exclusive"]),
+            downward_pitch_deg=float(
+                localization.get("downward_pitch_deg", 25.0)
+            ),
+            minimum_camera_baseline_m=float(
+                localization.get("minimum_camera_baseline_m", 0.08)
+            ),
+            maximum_median_ray_error_m=float(
+                localization.get("maximum_median_ray_error_m", 0.05)
+            ),
+        )
+        result["sam3_prompt"] = prompt
+        result["reviewed_object_label"] = label
+        objects[label.casefold()] = result
+    payload = {
+        "schema_version": 1,
+        "artifact_type": "reviewed_rgb_sam3_metric_object_anchors",
+        "survey_manifest": str(survey_manifest),
+        "sam3_manifest": str(sam3_manifest),
+        "objects": objects,
+        "isaac_scene_truth_used": False,
+    }
+    output_file.parent.mkdir(parents=True, exist_ok=True)
+    output_file.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    return payload
+
+
 def _limit_observation_window(path: Path, start: int, frame_count: int) -> int:
     if frame_count < 1:
         raise ValueError("--sam3-projection-window must be positive")
@@ -191,6 +263,32 @@ def _run_prompt_sessions(
         raise FileNotFoundError(f"no LingBot preprocessed RGB in {preprocessed_rgb}")
     records = []
     sessions = output / "prompt_sessions"
+
+    def write_incremental_manifest() -> dict:
+        manifest = {
+            "schema_version": 1,
+            "pipeline": "official_sam3.1_per_autonomously_discovered_label",
+            "video_resource": str(preprocessed_rgb),
+            "survey_signature": survey_signature_value,
+            "prompt_source": prompt_source,
+            "prompt_frame_selection": (
+                "Florence-2 RGB detection frame or explicit diagnostic override"
+            ),
+            "category_list_supplied_to_discovery": False,
+            "usd_semantics_read": False,
+            "scene_object_coordinates_read": False,
+            "complete": len(records) == len(prompts),
+            "completed_prompt_count": len(records),
+            "expected_prompt_count": len(prompts),
+            "prompts": records,
+        }
+        output.mkdir(parents=True, exist_ok=True)
+        (output / "sam3_manifest.json").write_text(
+            json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        return manifest
+
     for prompt_index, prompt in enumerate(prompts):
         prompt_frame = prompt_frames[prompt.casefold()]
         if prompt_frame >= frame_count:
@@ -237,31 +335,30 @@ def _run_prompt_sessions(
         record["artifact_directory"] = str(actual_artifacts.resolve())
         record["prompt_frame"] = prompt_frame
         records.append(record)
+        # Each prompt is an independent official SAM3 session. Persist it now
+        # so an unrelated GPU workload cannot force already completed labels
+        # to be recomputed after an OOM or process restart.
+        write_incremental_manifest()
         print(
             f"[Family map] SAM3 {prompt!r} frame={prompt_frame} "
             f"detections={record['detections']}"
         )
-    manifest = {
-        "schema_version": 1,
-        "pipeline": "official_sam3.1_per_autonomously_discovered_label",
-        "video_resource": str(preprocessed_rgb),
-        "survey_signature": survey_signature_value,
-        "prompt_source": prompt_source,
-        "prompt_frame_selection": "Florence-2 RGB detection frame or explicit diagnostic override",
-        "category_list_supplied_to_discovery": False,
-        "usd_semantics_read": False,
-        "scene_object_coordinates_read": False,
-        "prompts": records,
-    }
-    output.mkdir(parents=True, exist_ok=True)
-    (output / "sam3_manifest.json").write_text(
-        json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
-    )
-    return manifest
+    return write_incremental_manifest()
 
 
 def main() -> int:
     args = parse_args()
+    for name in (
+        "lingbot_num_scale_frames",
+        "lingbot_keyframe_interval",
+        "lingbot_kv_cache_window",
+        "lingbot_window_size",
+        "lingbot_overlap_size",
+    ):
+        if int(getattr(args, name)) < 1:
+            raise ValueError(f"--{name.replace('_', '-')} must be positive")
+    if args.lingbot_overlap_size >= args.lingbot_window_size:
+        raise ValueError("--lingbot-overlap-size must be smaller than window size")
     output = args.output_dir.expanduser().resolve()
     survey_manifest = output / "survey/capture_manifest.json"
     survey_rgb = output / "survey/rgb"
@@ -319,18 +416,32 @@ def main() -> int:
     if args.stage in {"all", "infer"}:
         manifest_path = lingbot_output / "lingbot_manifest.json"
         signature_path = lingbot_output / "survey_signature.txt"
+        requested_lingbot_config = LingBotInferenceConfig(
+            mode=args.mode,
+            num_scale_frames=args.lingbot_num_scale_frames,
+            keyframe_interval=args.lingbot_keyframe_interval,
+            kv_cache_sliding_window=args.lingbot_kv_cache_window,
+            window_size=args.lingbot_window_size,
+            overlap_size=args.lingbot_overlap_size,
+        )
+        cached_manifest = _read_json(manifest_path) if manifest_path.is_file() else {}
         cache_matches = (
             manifest_path.is_file()
             and signature_path.is_file()
             and signature_path.read_text(encoding="utf-8").strip()
             == current_survey_signature
+            and cached_manifest.get("config")
+            == {
+                key: value
+                for key, value in vars(requested_lingbot_config).items()
+            }
         )
         if args.force_inference or not cache_matches:
             result = run_lingbot_map(
                 survey_rgb,
                 args.checkpoint,
                 lingbot_output,
-                LingBotInferenceConfig(mode=args.mode),
+                requested_lingbot_config,
             )
             signature_path.write_text(current_survey_signature + "\n", encoding="utf-8")
             print(f"[Family map] LingBot frames: {result['outputs']['frame_count']}")
@@ -440,6 +551,13 @@ def main() -> int:
 
     if args.stage in {"all", "project"}:
         manifest = _read_json(sam3_output / "sam3_manifest.json")
+        if manifest.get("complete") is not True:
+            raise ValueError(
+                "SAM3 标签会话尚未全部完成；请重新运行 home-map。"
+                f"当前 {manifest.get('completed_prompt_count', len(manifest.get('prompts', [])))}/"
+                f"{manifest.get('expected_prompt_count', 'unknown')}，"
+                "已完成标签会从 prompt_sessions 断点复用。"
+            )
         paths = []
         for record in manifest["prompts"]:
             artifact_directory = Path(record["artifact_directory"])
@@ -479,13 +597,28 @@ def main() -> int:
             return 0
 
     if args.stage in {"all", "objects"}:
+        review_file = ROOT / "family_home_vln/object_review.json"
+        triangulated_anchors_file = (
+            semantic_output / "metric_object_anchors.json"
+        )
+        metric_anchors = _build_reviewed_metric_object_anchors(
+            survey_manifest,
+            sam3_output / "sam3_manifest.json",
+            review_file,
+            triangulated_anchors_file,
+        )
+        print(
+            "[Family map] reviewed metric object anchors="
+            f"{len(metric_anchors['objects'])}"
+        )
         objects = build_formal_object_catalog(
             map_output / "map.yaml",
             combined_observations,
             discovery_path,
-            ROOT / "family_home_vln/object_review.json",
+            review_file,
             output / "objects_formal.json",
             household_object_set_signature=OBJECT_SET_SIGNATURE,
+            triangulated_anchors_file=triangulated_anchors_file,
         )
         approved_objects = sum(
             item.get("status") == "approved" for item in objects["objects"]
