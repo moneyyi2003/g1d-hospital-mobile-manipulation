@@ -222,7 +222,7 @@ function renderRecognition() {
     ["RGB 巡检帧", survey.frame_count, resolution],
     ["自主发现类别", summary.discovered_categories, "模型自行生成名称"],
     ["完成地图对齐", summary.mapped_categories, `${summary.semantic_regions} 个语义区域`],
-    ["可导航地点", summary.approved_destinations, "仅开放审核通过的停靠点"],
+    ["网页可用地点", app.config.places.length, "正式审核 + 明示的临时 DEMO 区域"],
   ].map(([label, value, detail]) => `
     <div class="summary-card">
       <span>${escapeHtml(label)}</span>
@@ -234,6 +234,8 @@ function renderRecognition() {
   $("objectResults").innerHTML = recognition.objects.map((item) => {
     const statusLabel = item.status === "approved"
       ? "自主发现 · 可导航"
+      : item.status === "provisional_search_only"
+        ? "DEMO · 可实时搜索"
       : item.status === "mapped_not_navigable"
         ? "自主发现 · 已入图"
         : "自主发现 · 待入图";
@@ -262,14 +264,15 @@ function renderRecognition() {
 
   $("sceneResults").innerHTML = recognition.scenes.map((scene) => {
     const confirmed = scene.status === "confirmed";
+    const provisional = scene.status === "provisional_open";
     return `
-      <div class="result-row ${confirmed ? "approved" : "surveyed"}">
+      <div class="result-row ${confirmed ? "approved" : provisional ? "provisional_search_only" : "surveyed"}">
         <i aria-hidden="true"></i>
         <div>
           <div class="result-title"><b>${escapeHtml(scene.name)}</b></div>
           <p>${escapeHtml(scene.evidence)}</p>
         </div>
-        <span>${confirmed ? "已确认" : "待确认"}</span>
+        <span>${confirmed ? "正式开放" : provisional ? "DEMO 临时开放" : "待确认"}</span>
       </div>
     `;
   }).join("");
@@ -365,7 +368,7 @@ async function initialize() {
   $("placeChips").innerHTML = (taskExample
     ? `<button type="button" data-example="task">拿杯子并返回</button>`
     : "") + app.config.places
-    .map((place) => `<button type="button" data-id="${escapeHtml(place.id)}">${escapeHtml(place.name)}</button>`)
+    .map((place) => `<button type="button" data-id="${escapeHtml(place.id)}">${escapeHtml(place.name)}${place.availability === "provisional_demo" ? " · DEMO" : ""}</button>`)
     .join("");
   $("placeChips").querySelectorAll("button").forEach((button) => {
     button.onclick = () => {

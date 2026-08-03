@@ -24,7 +24,7 @@ import shutil
 import subprocess
 import sys
 import time
-from typing import Sequence
+from typing import Callable, Sequence
 
 
 ROOT = Path(__file__).resolve().parent
@@ -553,6 +553,7 @@ def move_right_palm_to(
     maximum_cartesian_travel_m: float = 0.70,
     tolerance_m: float = 0.025,
     maximum_iterations: int = 180,
+    progress_callback: Callable[[int, int], None] | None = None,
 ) -> dict:
     """Move the right palm with bounded position-only DLS IK."""
 
@@ -602,7 +603,10 @@ def move_right_palm_to(
             RIGHT_ARM_LIMITS_RAD[:, 1] - 0.03,
         )
         robot.set_dof_position_targets(targets, dof_indices=arm_indices)
-        app_utils.update_app(steps=3)
+        for _ in range(3):
+            simulation_app.update()
+            if progress_callback is not None:
+                progress_callback(_iteration + 1, maximum_iterations)
     final = link_world_position(robot, RIGHT_PALM_LINK)
     final_error = float(np.linalg.norm(target - final))
     return {
@@ -622,10 +626,18 @@ def move_right_palm_to(
     }
 
 
-def _set_right_hand(robot: WheeledRobot, targets_rad: np.ndarray) -> dict:
+def _set_right_hand(
+    robot: WheeledRobot,
+    targets_rad: np.ndarray,
+    *,
+    progress_callback: Callable[[int, int], None] | None = None,
+) -> dict:
     indices = robot.get_dof_indices(list(RIGHT_HAND_JOINTS)).numpy().tolist()
     robot.set_dof_position_targets(targets_rad, dof_indices=indices)
-    app_utils.update_app(steps=45)
+    for step in range(45):
+        simulation_app.update()
+        if progress_callback is not None:
+            progress_callback(step + 1, 45)
     actual = robot.get_dof_positions().numpy()[0, indices]
     return {
         "joint_order": list(RIGHT_HAND_JOINTS),
@@ -1099,6 +1111,46 @@ class FamilyHomeDualAgentSession:
         self.overview_camera = overview_camera
         self.live_frame = 0
 
+    def _manipulation_progress(self, phase: str, step: int, total: int) -> None:
+        self._publish_live(
+            "OPENVLA_PICK",
+            f"OPENVLA_PICK：{phase} {step}/{total}",
+            waypoint=step,
+            waypoint_count=total,
+        )
+
+    def _rotate_in_place(self, target_yaw: float, action: str) -> None:
+        """Continuously rotate the base; never teleport its heading for RGB scans."""
+
+        for step in range(240):
+            error = math.atan2(
+                math.sin(target_yaw - self.pose.yaw),
+                math.cos(target_yaw - self.pose.yaw),
+            )
+            if abs(error) <= 0.025:
+                break
+            angular = max(-0.55, min(0.55, 2.0 * error))
+            self.robot.apply_wheel_actions(
+                command_to_wheel_velocities(0.0, angular)
+            )
+            if not args.wheel_physics_only:
+                self.pose = assisted_step(self.pose, 0.0, angular)
+                set_assisted_robot_pose(self.robot, self.pose, 0.0, angular)
+            if self.camera is not None:
+                self.camera.set_world_pose(
+                    *camera_world_pose(self.pose), camera_axes="world"
+                )
+            simulation_app.update()
+            self._publish_live(
+                action,
+                f"{action}：底盘原地正向转向扫描 {step + 1}/240",
+                angular=angular,
+            )
+        self.robot.apply_wheel_actions(np.zeros(2, dtype=np.float32))
+        self.pose = (
+            robot_pose(self.robot) if args.wheel_physics_only else self.pose
+        )
+
     def _publish_live(
         self, action: str, message: str, *, linear: float = 0.0,
         angular: float = 0.0, waypoint: int = 0, waypoint_count: int = 0,
@@ -1141,6 +1193,8 @@ class FamilyHomeDualAgentSession:
             waypoint_tolerance=0.12 if precision else 0.18,
         )
         frame = 0
+        reverse_motion_frames = 0
+        previous_xy = np.asarray([self.pose.x, self.pose.y], dtype=np.float64)
         while simulation_app.is_running() and not follower.done:
             observed = robot_pose(self.robot) if args.wheel_physics_only else self.pose
             linear, angular, _label = follower.command(observed)
@@ -1158,6 +1212,21 @@ class FamilyHomeDualAgentSession:
                     camera_axes="world",
                 )
             simulation_app.update()
+            motion_pose = (
+                robot_pose(self.robot) if args.wheel_physics_only else self.pose
+            )
+            current_xy = np.asarray(
+                [motion_pose.x, motion_pose.y], dtype=np.float64
+            )
+            displacement = current_xy - previous_xy
+            if np.linalg.norm(displacement) > 1e-5:
+                forward = np.asarray(
+                    [math.cos(motion_pose.yaw), math.sin(motion_pose.yaw)],
+                    dtype=np.float64,
+                )
+                if float(np.dot(displacement, forward)) < -1e-5:
+                    reverse_motion_frames += 1
+            previous_xy = current_xy
             self._publish_live(
                 phase,
                 f"{phase}：航点 {follower.index}/{max(0, len(path) - 1)}",
@@ -1174,10 +1243,14 @@ class FamilyHomeDualAgentSession:
         self.pose = robot_pose(self.robot) if args.wheel_physics_only else self.pose
         error = math.dist((self.pose.x, self.pose.y), path[-1])
         result = {
-            "success": follower.done and error <= 0.20,
+            "success": (
+                follower.done and error <= 0.20 and reverse_motion_frames == 0
+            ),
             "frames": frame,
             "path_length_m": path_length(path),
             "position_error_m": error,
+            "reverse_motion_frames": reverse_motion_frames,
+            "forward_only_verified": reverse_motion_frames == 0,
             "final_pose": {
                 "x": self.pose.x,
                 "y": self.pose.y,
@@ -1382,8 +1455,7 @@ class FamilyHomeDualAgentSession:
         ][:count]
         frames = []
         for index, (yaw, pitch_rad) in enumerate(samples):
-            self.pose = Pose2D(self.pose.x, self.pose.y, yaw)
-            set_assisted_robot_pose(self.robot, self.pose, 0.0, 0.0)
+            self._rotate_in_place(yaw, "SEARCH_OBJECT")
             self.camera.set_world_pose(
                 *camera_world_pose(self.pose, pitch_rad), camera_axes="world"
             )
@@ -1929,7 +2001,13 @@ class FamilyHomeDualAgentSession:
                 "physical_execution": False,
             }
         direction = base_to_target / planar_distance
-        open_result = _set_right_hand(self.robot, RIGHT_HAND_OPEN_RAD)
+        open_result = _set_right_hand(
+            self.robot,
+            RIGHT_HAND_OPEN_RAD,
+            progress_callback=lambda step, total: self._manipulation_progress(
+                "张开右手", step, total
+            ),
+        )
         pregrasp = target_world.copy()
         pregrasp[:2] -= direction * 0.11
         pregrasp[2] += 0.025
@@ -1938,6 +2016,9 @@ class FamilyHomeDualAgentSession:
             pregrasp,
             maximum_cartesian_travel_m=0.75,
             tolerance_m=0.035,
+            progress_callback=lambda step, total: self._manipulation_progress(
+                "移动到预抓取位", step, total
+            ),
         )
         if not pregrasp_result["success"]:
             return {
@@ -1958,6 +2039,9 @@ class FamilyHomeDualAgentSession:
             grasp,
             maximum_cartesian_travel_m=0.20,
             tolerance_m=0.030,
+            progress_callback=lambda step, total: self._manipulation_progress(
+                "靠近杯子", step, total
+            ),
         )
         if not grasp_result["success"]:
             return {
@@ -1999,7 +2083,18 @@ class FamilyHomeDualAgentSession:
                 "grasp": grasp_result,
             }
 
-        close_result = _set_right_hand(self.robot, RIGHT_HAND_CLOSED_RAD)
+        close_result = _set_right_hand(
+            self.robot,
+            RIGHT_HAND_CLOSED_RAD,
+            progress_callback=lambda step, total: self._manipulation_progress(
+                "闭合手指", step, total
+            ),
+        )
+        self._publish_live(
+            "OPENVLA_PICK",
+            "OPENVLA_PICK：手指已闭合，建立物理抓取约束。",
+            force=True,
+        )
         constraint_path = _create_sim_grasp_constraint(
             palm_prim,
             object_prim,
@@ -2030,11 +2125,15 @@ class FamilyHomeDualAgentSession:
             palm_lift_target,
             maximum_cartesian_travel_m=0.14,
             tolerance_m=0.025,
+            progress_callback=lambda step, total: self._manipulation_progress(
+                "连续抬升杯子", step, total
+            ),
         )
         relative_distances = []
         object_heights = []
         for _frame in range(45):
             simulation_app.update()
+            self._manipulation_progress("稳定保持", _frame + 1, 45)
             object_now = _prim_world_position(object_prim)
             palm_now = _prim_world_position(palm_prim)
             object_heights.append(float(object_now[2]))
@@ -2834,6 +2933,8 @@ def main() -> int:
 
     frame = 0
     last_label = "start"
+    reverse_motion_frames = 0
+    previous_xy = np.asarray([pose.x, pose.y], dtype=np.float64)
     while simulation_app.is_running():
         observed = robot_pose(robot) if args.wheel_physics_only else pose
         linear, angular, label = follower.command(observed)
@@ -2854,6 +2955,16 @@ def main() -> int:
         simulation_app.update()
 
         current = robot_pose(robot) if args.wheel_physics_only else pose
+        current_xy = np.asarray([current.x, current.y], dtype=np.float64)
+        displacement = current_xy - previous_xy
+        if np.linalg.norm(displacement) > 1e-5:
+            forward = np.asarray(
+                [math.cos(current.yaw), math.sin(current.yaw)],
+                dtype=np.float64,
+            )
+            if float(np.dot(displacement, forward)) < -1e-5:
+                reverse_motion_frames += 1
+        previous_xy = current_xy
         live_due = live is not None and frame % max(
             1, PHYSICS_HZ // args.live_fps
         ) == 0
@@ -2954,12 +3065,14 @@ def main() -> int:
         "map_path": str(args.map) if map_source.startswith("lingbot") else None,
         "places_path": str(args.places) if map_source.startswith("lingbot") else None,
         "execution_mode": "wheel_physics_only" if args.wheel_physics_only else "stable_assisted",
-        "success": follower.done,
+        "success": follower.done and reverse_motion_frames == 0,
         "frames": frame,
         "path_length_m": path_length(path),
         "final_pose": {"x": final_pose.x, "y": final_pose.y, "yaw": final_pose.yaw},
         "position_error_m": position_error,
         "yaw_error_rad": yaw_error,
+        "reverse_motion_frames": reverse_motion_frames,
+        "forward_only_verified": reverse_motion_frames == 0,
         "survey_manifest": str(manifest) if manifest else None,
         "navigation_gif": str(args.record_gif) if args.record_gif else None,
     }
@@ -2980,14 +3093,24 @@ def main() -> int:
     summary_path.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
     if live is not None:
         live.publish_state(
-            state="succeeded" if follower.done else "failed",
+            state=(
+                "succeeded"
+                if follower.done and reverse_motion_frames == 0
+                else "failed"
+            ),
             message=(
                 f"已到达 {task_name}，位置误差 {position_error:.3f} m。"
-                if follower.done
+                if follower.done and reverse_motion_frames == 0
+                else "检测到反向运动，正向一致性门已拒绝本次导航。"
+                if reverse_motion_frames
                 else f"任务结束但未到达目标，位置误差 {position_error:.3f} m。"
             ),
             frame=frame,
-            action="arrived" if follower.done else "failed",
+            action=(
+                "arrived"
+                if follower.done and reverse_motion_frames == 0
+                else "failed"
+            ),
             pose=final_pose,
             linear=0.0,
             angular=0.0,
@@ -2996,7 +3119,7 @@ def main() -> int:
             result=result,
         )
     print(
-        f"Result: success={follower.done} position_error={position_error:.3f} m "
+        f"Result: success={result['success']} position_error={position_error:.3f} m "
         f"yaw_error={yaw_error:.3f} rad"
     )
     print(f"Summary: {summary_path}")
@@ -3009,6 +3132,12 @@ def main() -> int:
         if position_error > 0.20:
             print("TEST FAILED: final position error is too large", file=sys.stderr)
             return 3
+        if reverse_motion_frames:
+            print(
+                "TEST FAILED: forward-only gate detected reverse motion",
+                file=sys.stderr,
+            )
+            return 6
         print(
             "TEST PASSED: G1-D reached the reviewed "
             f"{args.scene_profile} destination"

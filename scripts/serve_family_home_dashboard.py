@@ -8,6 +8,7 @@ from dataclasses import asdict
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
+import math
 import os
 from pathlib import Path
 import signal
@@ -22,7 +23,7 @@ DEFAULT_ARTIFACTS = ROOT / "outputs/family_home_vln"
 DEFAULT_OUTPUT = ROOT / "outputs/family_home_web"
 sys.path.insert(0, str(ROOT))
 
-from family_home_vln.layout import ROBOT_RADIUS_M, SCENE_NAME, START_POSE  # noqa: E402
+from family_home_vln.layout import PLACES, ROBOT_RADIUS_M, SCENE_NAME, START_POSE  # noqa: E402
 from family_home_vln.household_objects import OBJECT_SET_SIGNATURE  # noqa: E402
 from simple_room_vln.artifacts import load_lingbot_artifacts  # noqa: E402
 from simple_room_vln.core import path_length, resolve_place  # noqa: E402
@@ -77,6 +78,11 @@ class FamilyHomeDashboardSession:
         self.grid, self.places = load_lingbot_artifacts(
             self.map_yaml, self.places_json, robot_radius_m=ROBOT_RADIUS_M
         )
+        if self.formal_bundle_current:
+            self._build_demo_catalogs()
+            self.grid, self.places = load_lingbot_artifacts(
+                self.map_yaml, self.places_json, robot_radius_m=ROBOT_RADIUS_M
+            )
         raw_assets = self.summary.get("assets", {})
         required = {"rgb_pointcloud", "semantic", "occupancy", "region"}
         if not required <= set(raw_assets):
@@ -100,6 +106,137 @@ class FamilyHomeDashboardSession:
         self._log_stream = None
         self._started_at: float | None = None
         self._last_command = ""
+
+    def _build_demo_catalogs(self) -> None:
+        """Create clearly labeled demo overrides without changing formal files."""
+
+        layout_by_id = {place.place_id: place for place in PLACES}
+        demo_places = json.loads(json.dumps(self.place_catalog))
+        for item in demo_places.get("places", []):
+            metadata = item.setdefault("metadata", {})
+            if item.get("status") == "approved":
+                metadata["availability"] = "formal_approved"
+                continue
+            place = layout_by_id.get(str(item.get("id", "")))
+            if place is None:
+                continue
+            docking_xy = self._nearest_reachable_demo_pose(
+                place.pose.x, place.pose.y
+            )
+            if docking_xy is None:
+                continue
+            pose = {
+                "x": docking_xy[0],
+                "y": docking_xy[1],
+                "yaw": place.pose.yaw,
+                "frame_id": "map",
+            }
+            item["status"] = "approved"
+            item["entrance_pose"] = pose
+            item["docking_candidates"] = [
+                {"id": "web_demo_occupancy_validated", "pose": pose}
+            ]
+            item["selected_docking_candidate"] = "web_demo_occupancy_validated"
+            metadata.update(
+                {
+                    "availability": "provisional_demo",
+                    "formal_review_status": "rejected",
+                    "provisional_reason": (
+                        "网页演示临时开放；停靠点已在正式 occupancy 上验证可达"
+                    ),
+                }
+            )
+
+        demo_objects = json.loads(json.dumps(self.object_catalog))
+        anchors = self._optional_json(
+            self.artifacts / "semantic/semantic_metadata.json"
+        ).get("anchors", {})
+        approved_by_label = {
+            str(item.get("source_label", "")).casefold(): item
+            for item in demo_objects.get("objects", [])
+            if item.get("status") == "approved"
+        }
+        for alias, canonical in (("sofa", "couch"), ("mug", "coffee cup")):
+            target = approved_by_label.get(canonical)
+            if target is not None and alias not in target.setdefault("aliases", []):
+                target["aliases"].append(alias)
+        provisional_labels = {"bowl", "chair", "bench", "desk"}
+        for item in demo_objects.get("objects", []):
+            label = str(item.get("source_label", "")).casefold()
+            if item.get("status") == "approved":
+                item["availability"] = "formal_approved"
+                continue
+            anchor = anchors.get(label)
+            if label not in provisional_labels or not isinstance(anchor, list):
+                continue
+            item.update(
+                {
+                    "object_id": "demo_" + label.replace(" ", "_"),
+                    "status": "approved",
+                    "availability": "provisional_search_only",
+                    "object_class": "demo_search_target",
+                    "map_position": {
+                        "x": float(anchor[0]),
+                        "y": float(anchor[1]),
+                        "z": 0.5,
+                        "frame_id": "map",
+                        "source": "sam3_map_anchor_provisional_demo",
+                    },
+                    "approach": {
+                        "stand_off_m": 0.9,
+                        "visibility_standoff_m": 1.1,
+                        "alignment_tolerance_m": 0.12,
+                        "preferred_view_bearing_rad": None,
+                    },
+                    "manipulation_ready": False,
+                }
+            )
+            item.setdefault("review", {})["demo_override"] = (
+                "临时开放实时搜索；未开放抓取，不代表正式审核通过"
+            )
+
+        self.places_json = self.output / "places_web_demo.json"
+        self.objects_json = self.output / "objects_web_demo.json"
+        self.places_json.write_text(
+            json.dumps(demo_places, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        self.objects_json.write_text(
+            json.dumps(demo_objects, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        self.place_catalog = demo_places
+        self.object_catalog = demo_objects
+
+    def _nearest_reachable_demo_pose(
+        self, x: float, y: float
+    ) -> tuple[float, float] | None:
+        """Snap a requested region pose to the nearest reachable formal free cell."""
+
+        center_row, center_col = self.grid.world_to_cell(x, y)
+        for radius in range(0, 31):
+            candidates: list[tuple[float, tuple[float, float]]] = []
+            for row in range(center_row - radius, center_row + radius + 1):
+                for col in range(center_col - radius, center_col + radius + 1):
+                    if max(abs(row - center_row), abs(col - center_col)) != radius:
+                        continue
+                    cell = (row, col)
+                    if not self.grid.is_free(cell):
+                        continue
+                    candidate = self.grid.cell_to_world(cell)
+                    try:
+                        self.grid.plan(
+                            (START_POSE.x, START_POSE.y), candidate
+                        )
+                    except ValueError:
+                        continue
+                    candidates.append(
+                        (math.dist((x, y), candidate), candidate)
+                    )
+            if candidates:
+                candidates.sort(key=lambda item: item[0])
+                return candidates[0][1]
+        return None
 
     def _optional_json(self, path: Path | None) -> dict:
         if path is None or not path.is_file():
@@ -134,11 +271,7 @@ class FamilyHomeDashboardSession:
         semantic_metadata = self._optional_json(
             self.artifacts / "semantic/semantic_metadata.json"
         )
-        object_catalog = self._optional_json(
-            self._input_path(
-                "objects", self.artifacts / "objects_formal.json"
-            )
-        )
+        object_catalog = self.object_catalog
         reviewed_by_prompt = {
             str(item.get("source_label", "")).casefold(): item
             for item in object_catalog.get("objects", [])
@@ -181,6 +314,9 @@ class FamilyHomeDashboardSession:
                 self.formal_bundle_current
                 and reviewed.get("status") == "approved"
             )
+            provisional_search = (
+                reviewed.get("availability") == "provisional_search_only"
+            )
             approved = bool(
                 self.formal_bundle_current
                 and place
@@ -204,6 +340,8 @@ class FamilyHomeDashboardSession:
                     "status": (
                         "approved"
                         if approved
+                        else "provisional_search_only"
+                        if provisional_search
                         else "approved_for_search_and_alignment"
                         if object_approved
                         else "rejected_by_review"
@@ -227,7 +365,9 @@ class FamilyHomeDashboardSession:
                         place.get("metadata", {}).get("region_id") if place else None
                     ),
                     "review_reason": (
-                        ""
+                        "临时开放实时搜索；尚未开放抓取"
+                        if provisional_search
+                        else ""
                         if approved
                         else str(reviewed.get("review", {}).get("reason", ""))
                         if reviewed
@@ -235,6 +375,7 @@ class FamilyHomeDashboardSession:
                         if evidence
                         else "已由 RGB 自主发现，但尚未形成合格的 SAM3 map-frame 证据"
                     ),
+                    "availability": reviewed.get("availability", "unavailable"),
                 }
             )
 
@@ -245,6 +386,9 @@ class FamilyHomeDashboardSession:
             prompt_key = prompt.casefold()
             evidence = evidence_by_prompt.get(prompt_key, [])
             recognized = bool(evidence)
+            availability = place.get("metadata", {}).get(
+                "availability", "formal_approved"
+            )
             object_name, scene_name = OBJECT_LABELS.get(
                 place_id, (place.get("name", prompt), "未分类区域")
             )
@@ -252,7 +396,14 @@ class FamilyHomeDashboardSession:
                 {
                     "id": place_id,
                     "name": scene_name,
-                    "status": "confirmed" if recognized else "surveyed_unconfirmed",
+                    "status": (
+                        "provisional_open"
+                        if availability == "provisional_demo"
+                        else "confirmed"
+                        if recognized
+                        else "surveyed_unconfirmed"
+                    ),
+                    "availability": availability,
                     "evidence": (
                         f"由“{object_name}”的 {len(evidence)} 条 map-frame 证据确认"
                         if recognized
@@ -351,6 +502,16 @@ class FamilyHomeDashboardSession:
                     "aliases": list(place.aliases),
                     "pose": asdict(place.pose),
                     "example": f"请带我到{place.name}",
+                    "availability": next(
+                        (
+                            item.get("metadata", {}).get(
+                                "availability", "formal_approved"
+                            )
+                            for item in self.place_catalog.get("places", [])
+                            if item.get("id") == place.place_id
+                        ),
+                        "formal_approved",
+                    ),
                 }
                 for place in self.places
                 if self.formal_bundle_current
@@ -465,6 +626,16 @@ class FamilyHomeDashboardSession:
             "target_name": target.name,
             "path": path,
             "steps": ["NAVIGATE", "ARRIVE"],
+            "availability": next(
+                (
+                    item.get("metadata", {}).get(
+                        "availability", "formal_approved"
+                    )
+                    for item in self.place_catalog.get("places", [])
+                    if item.get("id") == target.place_id
+                ),
+                "formal_approved",
+            ),
         }
 
     @staticmethod
@@ -510,7 +681,10 @@ class FamilyHomeDashboardSession:
                         "Agent 已拆解导航—搜索—对齐—拿取—验证—返回，"
                         "正在启动 Isaac Sim…"
                         if interpretation["mode"] == "dual_brain_task"
-                        else f"指令匹配审核地点“{interpretation['target_name']}”，正在启动 Isaac Sim…"
+                        else (
+                            f"指令匹配{'临时 DEMO 区域' if interpretation.get('availability') == 'provisional_demo' else '审核地点'}"
+                            f"“{interpretation['target_name']}”，正在启动 Isaac Sim…"
+                        )
                     ),
                     "command": command,
                     "task": interpretation["task"],

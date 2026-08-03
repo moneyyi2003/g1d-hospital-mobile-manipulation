@@ -267,6 +267,73 @@ class FamilyHomeDashboardSessionTest(unittest.TestCase):
             self.assertIn("OPENVLA_PICK", result["steps"])
             self.assertGreaterEqual(len(result["path"]), 2)
 
+    def test_web_demo_opens_reachable_rejected_regions_without_rewriting_formal(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.write_formal_bundle(root)
+            catalog = root / "artifacts/places_formal.json"
+            formal = json.loads(catalog.read_text(encoding="utf-8"))
+            for item in formal["places"]:
+                if item["id"] in {"bedroom_bed", "kitchen_counter"}:
+                    item["status"] = "rejected"
+                    item["docking_candidates"] = []
+                    item["selected_docking_candidate"] = ""
+            catalog.write_text(json.dumps(formal), encoding="utf-8")
+
+            session = self.make_session(root)
+            config = session.config()
+
+            self.assertEqual(len(config["places"]), 4)
+            provisional = {
+                item["id"]
+                for item in config["places"]
+                if item["availability"] == "provisional_demo"
+            }
+            self.assertEqual(provisional, {"bedroom_bed", "kitchen_counter"})
+            unchanged = json.loads(catalog.read_text(encoding="utf-8"))
+            self.assertEqual(
+                next(x for x in unchanged["places"] if x["id"] == "bedroom_bed")["status"],
+                "rejected",
+            )
+
+    def test_web_demo_opens_mapped_bowl_for_search_only(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.write_formal_bundle(root)
+            discovery = root / "artifacts/discovery/object_discovery.json"
+            payload = json.loads(discovery.read_text(encoding="utf-8"))
+            payload["objects"].append({
+                "label": "bowl",
+                "frame_occurrences": 3,
+                "raw_detection_count": 3,
+            })
+            discovery.write_text(json.dumps(payload), encoding="utf-8")
+            metadata = root / "artifacts/semantic/semantic_metadata.json"
+            payload = json.loads(metadata.read_text(encoding="utf-8"))
+            payload["anchors"]["bowl"] = [1.0, 1.0]
+            metadata.write_text(json.dumps(payload), encoding="utf-8")
+            objects = root / "artifacts/objects_formal.json"
+            payload = json.loads(objects.read_text(encoding="utf-8"))
+            payload["objects"].append({
+                "source_label": "bowl",
+                "aliases": ["碗"],
+                "status": "rejected",
+                "semantic_observation_count": 3,
+                "review": {"reason": "not formally reviewed"},
+            })
+            objects.write_text(json.dumps(payload), encoding="utf-8")
+
+            session = self.make_session(root)
+            bowl = next(
+                item
+                for item in session.config()["recognition"]["objects"]
+                if item["name"] == "bowl"
+            )
+
+            self.assertTrue(bowl["searchable"])
+            self.assertEqual(bowl["status"], "provisional_search_only")
+            self.assertFalse(bowl["manipulation_ready"])
+
     def test_changed_household_object_set_keeps_report_but_blocks_navigation(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

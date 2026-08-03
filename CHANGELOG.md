@@ -5,6 +5,33 @@
 
 ## 2026-08-03
 
+### 家庭网页临时开放、正向导航与连续操作画面
+
+- 网页服务在 `outputs/family_home_web/` 生成独立 demo 地点/对象库，不修改正式
+  `places_formal.json/objects_formal.json`。卧室、厨房停靠点先吸附到正式 occupancy
+  最近可达自由栅格，再以 `provisional_demo` 开放；页面明确显示 DEMO 标签。
+- 沙发/mug 合并为已审核对象别名；碗、椅子、长凳、桌子在存在 SAM3 map anchor 时以
+  `provisional_search_only` 开放，仍保持 `manipulation_ready=false`，不会假装可抓取。
+- 导航段增加位移与机器人前向轴点积检查，检测到反向运动立即使验收失败；普通 VLN 和
+  Dual Brain 导航摘要均输出 `reverse_motion_frames`、`forward_only_verified`。
+- SEARCH_OBJECT 原先通过直接改写底盘 yaw 获取多视角，现改为连续原地转向并逐帧发布；
+  OpenVLA 操作阶段在张手、预抓取 IK、靠近、闭手、建立约束、连续抬升和稳定保持期间
+  持续发布 RTX 第三人称画面，消除网页只看到抓取前后状态的问题。
+
+验证：
+
+- Dashboard 测试 9/9、Dual Brain 测试 20/20、Python/JavaScript 语法和
+  `git diff --check` 通过。
+- 临时卧室指令实跑成功：526 帧、位置误差 0.119 m、反向运动帧 0。
+- “请带我去餐厅，拿杯子，再回到客厅沙发旁”在同一 Isaac SimulationApp 再次成功；
+  4 个导航/对齐段反向运动帧均为 0，右手连续操作状态可在网页观察，杯子抬升
+  0.304 m 并稳定保持 30 帧后携带返回。
+
+已知限制：
+
+- 临时开放对象仅表示可在网页发起实时搜索；除杯子外没有三维操作审核，不能用于抓取。
+- 当前连续抓取仍使用位置 IK 和显式 PhysX 约束，尚未完成场景/自碰撞 IK 和纯接触抓取。
+
 ### G1-D OpenVLA-OFT 专家数采协作包
 
 - 新建独立 `vln_vla_expert_handoff_20260803/` 交付目录，只复制而不移动/覆盖现有资产；
