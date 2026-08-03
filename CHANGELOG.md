@@ -5,6 +5,32 @@
 
 ## 2026-08-03
 
+### G1-D OpenVLA-OFT 专家数采协作包
+
+- 新建独立 `vln_vla_expert_handoff_20260803/` 交付目录，只复制而不移动/覆盖现有资产；
+  包含完整 G1-D USD/URDF、SimpleRoom/SofaTablePlant、正式家庭 LingBot 点云与
+  occupancy、审核地点/对象库和 VLN/Dual Brain 代码快照。
+- 新增 `expert_collection_scene.usda`：操作桌上放置 3 个边长 0.03 m、密度
+  2000 kg/m³、质量 0.054 kg 的红色动态方块，固定机器人、桌子、方块和放置区 Stage
+  路径，供外部专家脚本参数化接入。
+- 新增第三视角/右腕相机适配、专家输入 config、现有 G1-D PD/阻尼基线、action.jsonl
+  schema/example 和双方 RLDS 联调检查表。腕部相机明确是项目新增传感器，外参需在正式
+  批量数采前目视标定并冻结。
+
+验证：
+
+- Isaac Sim 6.0.1 成功打开组合层；8 个必需 prim、3 个方块尺寸/密度及 3 条相对资产
+  引用检查通过。交付包 302 MB、227 个文件；Python 编译、JSON 解析和
+  `git diff --check` 通过。
+
+已知限制：
+
+- 交付包含大体积 USD/点云资产，按项目规则不进入 Git；它是文件传输制品。
+- 上游 `SofaTablePlant.usd` 仍有既有纹理相对路径缺失警告；几何可加载，双方应在正式
+  采集前决定修复或冻结当前渲染域。
+- 本轮仅验证结构和参数合同，尚未接入同事的专家脚本，也未把首条双相机轨迹转换并回放
+  为 OpenVLA-OFT RLDS。
+
 ### 家庭 Dual Brain 可视化任务控制台
 
 - 将 6012 家庭网页从单地点 VLN 控制台扩展为自然语言任务控制台。普通指令继续调用
