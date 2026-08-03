@@ -374,6 +374,14 @@ RIGHT_ARM_LIMITS_RAD = np.asarray(
     ],
     dtype=np.float64,
 )
+# Bent-elbow seed adapted from the upstream Unitree G1 Isaac asset defaults.
+# Starting Cartesian IK from the all-zero hanging pose is singular when the
+# imported G1-D is correctly oriented with its anatomical front along the
+# navigation heading.
+RIGHT_ARM_PREGRASP_SEED_RAD = np.asarray(
+    [0.35, -0.16, 0.0, 0.87, 0.0, 0.0, 0.0],
+    dtype=np.float64,
+)
 RIGHT_PALM_LINK = "right_hand_palm_link"
 RIGHT_HAND_JOINTS = (
     "right_hand_thumb_0_joint",
@@ -645,6 +653,37 @@ def _set_right_hand(
         "actual_rad": np.asarray(actual, dtype=np.float64).tolist(),
         "maximum_error_rad": float(
             np.max(np.abs(np.asarray(actual) - targets_rad))
+        ),
+    }
+
+
+def _set_right_arm_pregrasp_seed(
+    robot: WheeledRobot,
+    *,
+    progress_callback: Callable[[int, int], None] | None = None,
+) -> dict:
+    indices = robot.get_dof_indices(list(RIGHT_ARM_JOINTS)).numpy().tolist()
+    start = robot.get_dof_positions().numpy()[0, indices].astype(np.float64)
+    steps = 60
+    for step in range(steps):
+        ratio = (step + 1) / steps
+        target = start + ratio * (RIGHT_ARM_PREGRASP_SEED_RAD - start)
+        robot.set_dof_position_targets(target, dof_indices=indices)
+        simulation_app.update()
+        if progress_callback is not None:
+            progress_callback(step + 1, steps)
+    actual = robot.get_dof_positions().numpy()[0, indices]
+    return {
+        "joint_order": list(RIGHT_ARM_JOINTS),
+        "target_rad": RIGHT_ARM_PREGRASP_SEED_RAD.tolist(),
+        "actual_rad": np.asarray(actual, dtype=np.float64).tolist(),
+        "maximum_error_rad": float(
+            np.max(
+                np.abs(
+                    np.asarray(actual, dtype=np.float64)
+                    - RIGHT_ARM_PREGRASP_SEED_RAD
+                )
+            )
         ),
     }
 
@@ -2001,6 +2040,12 @@ class FamilyHomeDualAgentSession:
                 "physical_execution": False,
             }
         direction = base_to_target / planar_distance
+        arm_seed_result = _set_right_arm_pregrasp_seed(
+            self.robot,
+            progress_callback=lambda step, total: self._manipulation_progress(
+                "右臂进入预备姿态", step, total
+            ),
+        )
         open_result = _set_right_hand(
             self.robot,
             RIGHT_HAND_OPEN_RAD,
@@ -2025,6 +2070,7 @@ class FamilyHomeDualAgentSession:
                 "success": False,
                 "reason": "pregrasp_ik_failed",
                 "physical_execution": True,
+                "arm_pregrasp_seed": arm_seed_result,
                 "open_hand": open_result,
                 "pregrasp": pregrasp_result,
             }
@@ -2048,6 +2094,7 @@ class FamilyHomeDualAgentSession:
                 "success": False,
                 "reason": "grasp_ik_failed",
                 "physical_execution": True,
+                "arm_pregrasp_seed": arm_seed_result,
                 "open_hand": open_result,
                 "pregrasp": pregrasp_result,
                 "grasp": grasp_result,
@@ -2192,6 +2239,7 @@ class FamilyHomeDualAgentSession:
             "object_id": target["object_id"],
             "constraint_path": constraint_path,
             "body_selection": body_selection,
+            "arm_pregrasp_seed": arm_seed_result,
             "open_hand": open_result,
             "pregrasp": pregrasp_result,
             "grasp": grasp_result,
