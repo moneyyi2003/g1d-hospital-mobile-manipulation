@@ -16,11 +16,14 @@
 - 新增第三视角/右腕相机适配、专家输入 config、现有 G1-D PD/阻尼基线、action.jsonl
   schema/example 和双方 RLDS 联调检查表。腕部相机明确是项目新增传感器，外参需在正式
   批量数采前目视标定并冻结。
+- 根据协作要求将网页 6012 运行时家庭组合完整物化到交付 USD：除
+  SimpleRoom/SofaTablePlant 外，加入同一组 7 个家庭 fixture 和 11 个 ReplicaCAD
+  家庭物品；专家桌和红色方块是在这份完整副本上的增量，不再是简化场景。
 
 验证：
 
-- Isaac Sim 6.0.1 成功打开组合层；8 个必需 prim、3 个方块尺寸/密度及 3 条相对资产
-  引用检查通过。交付包 302 MB、227 个文件；Python 编译、JSON 解析和
+- Isaac Sim 6.0.1 成功打开组合层；14 个关键 prim、7 个家庭 fixture、11 个家庭物品、
+  3 个方块尺寸/密度及全部相对资产引用检查通过。交付包约 309 MB；Python 编译、JSON 解析和
   `git diff --check` 通过。
 
 已知限制：
