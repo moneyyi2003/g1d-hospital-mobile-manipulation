@@ -42,6 +42,11 @@ fail-closed。近期仿真下一步仍是场景/自碰撞 IK 与抓取鲁棒性�
 导航均 `forward_only_verified=true`。RGB 搜索不再瞬移底盘航向，右臂预抓取、靠近、
 闭手、抬升和稳定保持现在连续发布网页画面。
 
+复合指令的 Isaac 启动预览已改为先编译 `place_id/object_id/place_id`，不再把包含去程和
+返回地点的整句交给单地点解析器。“请带我去餐厅，拿杯子，再回到卧室”已实跑成功：
+mission 明确为 `dining_area -> scan_coffee_cup_05 -> bedroom_bed`，最终携杯到达卧室，
+返回段 `forward_only_verified=true`。
+
 已建立独立、未纳入 Git 的 `vln_vla_expert_handoff_20260803/` 同事交付包：复制 G1-D
 完整 USD/URDF 资产、网页 6012 的完整家庭组合场景、正式 LingBot 地图和导航代码，并新增专家数采操作
 桌、3 个 3 cm/54 g 红色动态方块、第三视角/右腕相机适配、PD 参数及 action.jsonl

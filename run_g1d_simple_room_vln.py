@@ -2663,6 +2663,29 @@ def main() -> int:
         )
         final_yaw = 0.0
         task_name = "rgb_survey"
+    elif args.family_task:
+        from g1d_dual_brain_agent.planner import compile_family_home_command
+
+        preview_mission = compile_family_home_command(
+            args.command,
+            places_catalog=json.loads(args.places.read_text(encoding="utf-8")),
+            objects_catalog=json.loads(args.objects.read_text(encoding="utf-8")),
+            mission_id="family-home-preview",
+        )
+        places_by_id = {place.place_id: place for place in places}
+        outbound = places_by_id[preview_mission.goals[0].instruction]
+        target = places_by_id[preview_mission.goals[2].instruction]
+        start = FAMILY_HOME_START
+        outbound_path = grid.plan(
+            (start.x, start.y), (outbound.pose.x, outbound.pose.y)
+        )
+        return_path = grid.plan(
+            (outbound.pose.x, outbound.pose.y),
+            (target.pose.x, target.pose.y),
+        )
+        path = outbound_path + return_path[1:]
+        final_yaw = target.pose.yaw
+        task_name = "family_go_pick_return"
     else:
         target = resolve_place(args.command, places)
         start = (
