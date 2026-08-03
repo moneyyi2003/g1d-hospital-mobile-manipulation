@@ -290,6 +290,18 @@ function render() {
   $("timing").textContent = `${state.frame || 0} / ${(state.elapsed_sec || 0).toFixed(1)} s`;
   $("hudAction").textContent = (state.action || "standby").toUpperCase();
   $("hudTiming").textContent = `FRAME ${String(state.frame || 0).padStart(4, "0")}`;
+  const steps = state.mission_steps || (
+    state.mission_mode === "dual_brain_task"
+      ? ["NAVIGATE", "SEARCH_OBJECT", "APPROACH_AND_ALIGN", "OPENVLA_PICK", "VERIFY", "RETURN"]
+      : ["NAVIGATE", "ARRIVE"]
+  );
+  const current = String(state.action || "").toUpperCase();
+  const activeIndex = steps.findIndex((step) => current.includes(step));
+  $("agentStages").innerHTML = steps.map((step, index) => {
+    const done = state.state === "succeeded" || (activeIndex >= 0 && index < activeIndex);
+    const active = activeIndex === index;
+    return `<span class="${done ? "done" : active ? "active" : ""}">${escapeHtml(step)}</span>`;
+  }).join("");
   $("submitButton").disabled = Boolean(state.process_running);
   const progress = state.waypoint_count
     ? Math.min(100, (state.waypoint || 0) / state.waypoint_count * 100)
@@ -349,11 +361,18 @@ async function initialize() {
   $("sourceBadge").textContent = app.config.map.source_label;
   $("mapTruth").textContent = app.mapData.truth_boundary || "FORMAL MAP BUNDLE";
   renderRecognition();
-  $("placeChips").innerHTML = app.config.places
+  const taskExample = app.config.examples?.[0];
+  $("placeChips").innerHTML = (taskExample
+    ? `<button type="button" data-example="task">拿杯子并返回</button>`
+    : "") + app.config.places
     .map((place) => `<button type="button" data-id="${escapeHtml(place.id)}">${escapeHtml(place.name)}</button>`)
     .join("");
   $("placeChips").querySelectorAll("button").forEach((button) => {
     button.onclick = () => {
+      if (button.dataset.example === "task") {
+        $("commandInput").value = taskExample;
+        return;
+      }
       const place = app.config.places.find((item) => item.id === button.dataset.id);
       $("commandInput").value = place.example;
     };

@@ -5,6 +5,35 @@
 
 ## 2026-08-03
 
+### 家庭 Dual Brain 可视化任务控制台
+
+- 将 6012 家庭网页从单地点 VLN 控制台扩展为自然语言任务控制台。普通指令继续调用
+  正式 LingBot/SAM3 地图上的既有 VLN；含拿取的指令严格编译为审核过的
+  `place_id/object_id/place_id`，然后启动同会话 Dual Brain。
+- 新增 Agent 六阶段状态条、复合任务示例、任务遥测和 Isaac 第三人称实时行为；头部
+  RGB 同时保留给无类别清单实时找物及 OpenVLA，网页相机不再抢占操作观测。
+- Dual Brain backend 在导航、扫描、对齐、OpenVLA、验证和最终结果阶段持续发布 live
+  state/MJPEG；最终失败信息保留 Executive 的结构化原因。
+
+验证：
+
+- 页面 HTTP 200，首字节 0.289 s；配置 API 返回 4 个正式图层，网页复合指令成功启动
+  Isaac，MJPEG 单帧约 61 KB。实际状态连续经过 `NAVIGATE`、`SEARCH_OBJECT`、
+  `APPROACH_AND_ALIGN` 和 `OPENVLA_PICK`。
+- 该次实跑正式 VLN、实时 RGB 找杯、0.766 m 对齐和 OpenVLA 推理成功；物理抓取首次因
+  约束吸附位移 0.054 m 超过 0.04 m 门槛失败，第二次因 0.038 m IK 误差超过 0.025 m
+  门槛失败，Agent 正确停止且未虚构携物返回。
+- Dashboard 测试 7/7、Dual Brain 测试 20/20、Python/JavaScript 语法及
+  `git diff --check` 通过。完整家庭 discovery 集初次运行因缺少
+  `lingbot_semantic_nav/src` 的 `PYTHONPATH` 出现 2 个导入错误，补齐环境后相关网页测试
+  全部通过。
+
+已知限制：
+
+- 网页任务使用 `stable_assisted` 和仿真右臂；不代表纯轮地接触或实体 G1-D 验收。
+- OpenVLA 仍为 BridgeData 建议，执行侧是审核锚点驱动的有界 IK/PhysX 约束；需要补充
+  场景/自碰撞 IK 和更鲁棒的预抓取，不能通过放宽现有安全门来掩盖失败。
+
 ### 家庭去—拿—返回同会话闭环
 
 - 新增可审计的家庭长任务编译器，把“去地点—拿物体—返回地点”解析为审核

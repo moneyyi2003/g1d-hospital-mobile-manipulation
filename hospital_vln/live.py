@@ -30,12 +30,16 @@ class LivePublisher:
         task: str,
         map_source: str,
         path: Sequence[tuple[float, float]],
+        mission_mode: str = "vln_navigation",
+        mission_steps: Sequence[str] = (),
     ) -> None:
         self.root = root.resolve()
         self.root.mkdir(parents=True, exist_ok=True)
         self.command = command
         self.task = task
         self.map_source = map_source
+        self.mission_mode = mission_mode
+        self.mission_steps = list(mission_steps)
         self.planned = [{"x": x, "y": y} for x, y in path]
         self.trajectory: list[dict[str, float]] = []
         self.sequence = 0
@@ -69,6 +73,8 @@ class LivePublisher:
             "command": self.command,
             "task": self.task,
             "map_source": self.map_source,
+            "mission_mode": self.mission_mode,
+            "mission_steps": self.mission_steps,
             "frame": frame,
             "action": action,
             "pose": {"x": pose.x, "y": pose.y, "yaw": pose.yaw},

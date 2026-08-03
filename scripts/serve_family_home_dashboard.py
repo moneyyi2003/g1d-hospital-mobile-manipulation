@@ -26,6 +26,7 @@ from family_home_vln.layout import ROBOT_RADIUS_M, SCENE_NAME, START_POSE  # noq
 from family_home_vln.household_objects import OBJECT_SET_SIGNATURE  # noqa: E402
 from simple_room_vln.artifacts import load_lingbot_artifacts  # noqa: E402
 from simple_room_vln.core import path_length, resolve_place  # noqa: E402
+from g1d_dual_brain_agent.planner import compile_family_home_command  # noqa: E402
 
 
 OBJECT_LABELS = {
@@ -49,10 +50,16 @@ class FamilyHomeDashboardSession:
         self.live_dir.mkdir(parents=True, exist_ok=True)
         self.map_yaml = self.artifacts / "lingbot_map/map.yaml"
         self.places_json = self.artifacts / "places_formal.json"
+        self.objects_json = self.artifacts / "objects_formal.json"
         self.summary_path = self.artifacts / "mapping_summary.json"
         missing = [
             path
-            for path in (self.map_yaml, self.places_json, self.summary_path)
+            for path in (
+                self.map_yaml,
+                self.places_json,
+                self.objects_json,
+                self.summary_path,
+            )
             if not path.is_file()
         ]
         if missing:
@@ -62,6 +69,7 @@ class FamilyHomeDashboardSession:
             )
         self.summary = _read_json(self.summary_path)
         self.place_catalog = _read_json(self.places_json)
+        self.object_catalog = _read_json(self.objects_json)
         self.formal_bundle_current = (
             self.place_catalog.get("map", {}).get("household_object_set_signature")
             == OBJECT_SET_SIGNATURE
@@ -349,6 +357,10 @@ class FamilyHomeDashboardSession:
             ],
             "recognition": self.recognition,
             "camera_stream": "/stream/camera.mjpg",
+            "examples": [
+                "请带我去餐厅，拿杯子，再回到客厅沙发旁",
+                "请带我到客厅沙发旁",
+            ],
         }
 
     def map_data(self) -> dict:
@@ -364,7 +376,7 @@ class FamilyHomeDashboardSession:
         return {
             "schema_version": 1,
             "state": "idle",
-            "message": "输入家庭导航指令后启动 Isaac Sim。",
+            "message": "输入导航或拿取返回任务后启动 Isaac Sim。",
             "command": self._last_command,
             "task": None,
             "frame": 0,
@@ -412,6 +424,49 @@ class FamilyHomeDashboardSession:
         )
         return target, path
 
+    def interpret(self, command: str) -> dict:
+        """Resolve a reviewed navigation or go-pick-return mission."""
+        compound = any(marker in command for marker in ("拿", "取", "抓"))
+        if compound:
+            mission = compile_family_home_command(
+                command,
+                places_catalog=self.place_catalog,
+                objects_catalog=self.object_catalog,
+                mission_id="family-home-dashboard-preview",
+            )
+            outbound = self._places_by_id[mission.goals[0].instruction]
+            return_place = self._places_by_id[mission.goals[2].instruction]
+            first = self.grid.plan(
+                (START_POSE.x, START_POSE.y),
+                (outbound.pose.x, outbound.pose.y),
+            )
+            second = self.grid.plan(
+                (outbound.pose.x, outbound.pose.y),
+                (return_place.pose.x, return_place.pose.y),
+            )
+            return {
+                "mode": "dual_brain_task",
+                "task": mission.mission_id,
+                "target_name": f"{mission.goals[1].target_id} → {return_place.name}",
+                "path": first + second[1:],
+                "steps": [
+                    "NAVIGATE",
+                    "SEARCH_OBJECT",
+                    "APPROACH_AND_ALIGN",
+                    "OPENVLA_PICK",
+                    "VERIFY",
+                    "RETURN",
+                ],
+            }
+        target, path = self.plan(command)
+        return {
+            "mode": "vln_navigation",
+            "task": target.place_id,
+            "target_name": target.name,
+            "path": path,
+            "steps": ["NAVIGATE", "ARRIVE"],
+        }
+
     @staticmethod
     def _other_kit_processes() -> list[int]:
         result = []
@@ -433,7 +488,8 @@ class FamilyHomeDashboardSession:
         with self._lock:
             if self._process is not None and self._process.poll() is None:
                 raise ValueError("已有家庭导航任务正在运行，请先等待或停止任务")
-        target, path = self.plan(command)
+        interpretation = self.interpret(command)
+        path = interpretation["path"]
         with self._lock:
             kit_pids = self._other_kit_processes()
             if kit_pids:
@@ -450,10 +506,17 @@ class FamilyHomeDashboardSession:
             initial.update(
                 {
                     "state": "starting",
-                    "message": f"指令匹配审核地点“{target.name}”，正在启动 Isaac Sim…",
+                    "message": (
+                        "Agent 已拆解导航—搜索—对齐—拿取—验证—返回，"
+                        "正在启动 Isaac Sim…"
+                        if interpretation["mode"] == "dual_brain_task"
+                        else f"指令匹配审核地点“{interpretation['target_name']}”，正在启动 Isaac Sim…"
+                    ),
                     "command": command,
-                    "task": target.place_id,
-                    "target_name": target.name,
+                    "task": interpretation["task"],
+                    "target_name": interpretation["target_name"],
+                    "mission_mode": interpretation["mode"],
+                    "mission_steps": interpretation["steps"],
                     "planned_trajectory": [{"x": x, "y": y} for x, y in path],
                     "waypoint_count": max(0, len(path) - 1),
                     "path_length_m": path_length(path),
@@ -476,7 +539,6 @@ class FamilyHomeDashboardSession:
                 "family-home",
                 "--headless",
                 "--test",
-                "--no-camera",
                 "--command",
                 command,
                 "--output-dir",
@@ -492,6 +554,21 @@ class FamilyHomeDashboardSession:
                 "--live-resolution",
                 "960x540",
             ]
+            if interpretation["mode"] == "dual_brain_task":
+                argv.extend(
+                    [
+                        "--dual-agent",
+                        "--family-task",
+                        "--openvla",
+                        "--execute-sim-pick",
+                        "--objects",
+                        str(self.objects_json),
+                        "--live-search-frames",
+                        "9",
+                    ]
+                )
+            else:
+                argv.append("--no-camera")
             self._process = subprocess.Popen(
                 argv,
                 cwd=ROOT,

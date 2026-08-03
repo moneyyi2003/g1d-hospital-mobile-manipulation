@@ -1076,7 +1076,10 @@ class SurveyRecorder:
 class FamilyHomeDualAgentSession:
     """In-process skill backend that keeps one Isaac SimulationApp alive."""
 
-    def __init__(self, robot, camera, grid, places, output_dir: Path) -> None:
+    def __init__(
+        self, robot, camera, grid, places, output_dir: Path,
+        *, live=None, overview_camera=None,
+    ) -> None:
         self.robot = robot
         self.camera = camera
         self.grid = grid
@@ -1092,6 +1095,33 @@ class FamilyHomeDualAgentSession:
         self.last_handoff_image_path = ""
         self.last_handoff_gate: dict = {}
         self.search_handoff_cache: dict[str, dict] = {}
+        self.live = live
+        self.overview_camera = overview_camera
+        self.live_frame = 0
+
+    def _publish_live(
+        self, action: str, message: str, *, linear: float = 0.0,
+        angular: float = 0.0, waypoint: int = 0, waypoint_count: int = 0,
+        force: bool = False, result: dict | None = None,
+    ) -> None:
+        if self.live is None:
+            return
+        due = force or self.live_frame % max(1, PHYSICS_HZ // args.live_fps) == 0
+        if self.overview_camera is not None:
+            self.overview_camera.set_world_pose(
+                *home_chase_camera_pose(self.pose), camera_axes="world"
+            )
+        if due:
+            source = self.overview_camera or self.camera
+            image = camera_rgb(source) if source is not None else None
+            if image is not None:
+                self.live.publish_image(image)
+            self.live.publish_state(
+                state="running", message=message, frame=self.live_frame,
+                action=action, pose=self.pose, linear=linear, angular=angular,
+                waypoint=waypoint, waypoint_count=waypoint_count, result=result,
+            )
+        self.live_frame += 1
 
     def _drive(
         self,
@@ -1099,6 +1129,7 @@ class FamilyHomeDualAgentSession:
         goal_yaw: float,
         *,
         precision: bool = False,
+        phase: str = "NAVIGATE",
     ) -> dict:
         follower = PathFollower(
             path,
@@ -1127,6 +1158,14 @@ class FamilyHomeDualAgentSession:
                     camera_axes="world",
                 )
             simulation_app.update()
+            self._publish_live(
+                phase,
+                f"{phase}：航点 {follower.index}/{max(0, len(path) - 1)}",
+                linear=linear,
+                angular=angular,
+                waypoint=follower.index,
+                waypoint_count=max(0, len(path) - 1),
+            )
             frame += 1
             if args.steps > 0 and frame >= args.steps:
                 break
@@ -1146,6 +1185,10 @@ class FamilyHomeDualAgentSession:
             },
         }
         self.segments.append(result)
+        self._publish_live(
+            phase, f"{phase} 完成。", waypoint=max(0, len(path) - 1),
+            waypoint_count=max(0, len(path) - 1), force=True, result=result,
+        )
         return result
 
     def navigate(self, command, memory):
@@ -1174,7 +1217,8 @@ class FamilyHomeDualAgentSession:
         path = self.grid.plan(
             (self.pose.x, self.pose.y), (target.pose.x, target.pose.y)
         )
-        result = self._drive(path, target.pose.yaw)
+        phase = "RETURN" if command.payload_object_id else "NAVIGATE"
+        result = self._drive(path, target.pose.yaw, phase=phase)
         carry_check = None
         if command.payload_object_id and result["success"]:
             stage = stage_utils.get_current_stage()
@@ -1246,6 +1290,11 @@ class FamilyHomeDualAgentSession:
             SkillStatus,
         )
 
+        self._publish_live(
+            "VERIFY",
+            f"VERIFY：检查 {command.target_id} 的抬升高度和稳定保持。",
+            force=True,
+        )
         evidence = dict(self.last_manipulation_evidence)
         success = (
             evidence.get("object_id") == command.target_id
@@ -1339,6 +1388,13 @@ class FamilyHomeDualAgentSession:
                 *camera_world_pose(self.pose, pitch_rad), camera_axes="world"
             )
             app_utils.update_app(steps=4)
+            self._publish_live(
+                "SEARCH_OBJECT",
+                f"SEARCH_OBJECT：机载 RGB 扫描 {index + 1}/{len(samples)}",
+                waypoint=index + 1,
+                waypoint_count=len(samples),
+                force=True,
+            )
             image_name = f"{index:06d}.png"
             if not save_camera_rgb(self.camera, rgb_dir / image_name):
                 raise RuntimeError(f"RGB camera produced no image at live view {index}")
@@ -1445,6 +1501,9 @@ class FamilyHomeDualAgentSession:
             while process.poll() is None and simulation_app.is_running():
                 self.robot.apply_wheel_actions(np.zeros(2, dtype=np.float32))
                 simulation_app.update()
+                self._publish_live(
+                    "SEARCH_OBJECT", "SEARCH_OBJECT：正在分析机器人实时 RGB…"
+                )
                 if time.monotonic() - started > 240.0:
                     process.terminate()
                     try:
@@ -1630,7 +1689,10 @@ class FamilyHomeDualAgentSession:
                 FailureCode.OUT_OF_REACH,
             )
         visibility_result = self._drive(
-            visibility_path, visibility_goal.yaw, precision=True
+            visibility_path,
+            visibility_goal.yaw,
+            precision=True,
+            phase="APPROACH_AND_ALIGN",
         )
         visibility_distance = math.dist((self.pose.x, self.pose.y), anchor)
         visibility_yaw_error = abs(
@@ -1770,7 +1832,10 @@ class FamilyHomeDualAgentSession:
                     preferred_view_bearing_rad=preferred_bearing,
                 )
                 manipulation_result = self._drive(
-                    reach_path, reach_goal.yaw, precision=True
+                    reach_path,
+                    reach_goal.yaw,
+                    precision=True,
+                    phase="APPROACH_AND_ALIGN",
                 )
                 distance = math.dist((self.pose.x, self.pose.y), anchor)
                 yaw_error = abs(
@@ -2063,6 +2128,11 @@ class FamilyHomeDualAgentSession:
             inspect_checkpoint,
         )
 
+        self._publish_live(
+            "OPENVLA_PICK",
+            f"OPENVLA_PICK：准备对 {command.target_id} 执行视觉动作推理。",
+            force=True,
+        )
         if self.camera is None:
             return SkillResult(
                 command.command_id,
@@ -2520,6 +2590,19 @@ def main() -> int:
             task=task_name,
             map_source=map_source,
             path=path,
+            mission_mode=("dual_brain_task" if args.family_task else "vln_navigation"),
+            mission_steps=(
+                (
+                    "NAVIGATE",
+                    "SEARCH_OBJECT",
+                    "APPROACH_AND_ALIGN",
+                    "OPENVLA_PICK",
+                    "VERIFY",
+                    "RETURN",
+                )
+                if args.family_task
+                else ("NAVIGATE", "ARRIVE")
+            ),
         )
         live.publish_state(
             state="loading",
@@ -2559,7 +2642,7 @@ def main() -> int:
 
     overview_camera = None
     gif_frames = []
-    if args.record_gif is not None or (live is not None and camera is None):
+    if args.record_gif is not None or live is not None:
         if args.record_fps <= 0 or args.record_fps > PHYSICS_HZ:
             raise ValueError("--record-fps must be between 1 and 60")
         from isaacsim.sensors.camera import Camera
@@ -2675,6 +2758,8 @@ def main() -> int:
             grid,
             places,
             args.output_dir,
+            live=live,
+            overview_camera=overview_camera,
         )
         payload = run_dual_agent_session(session)
         summary_path = args.output_dir / "dual_agent_run_summary.json"
@@ -2684,6 +2769,28 @@ def main() -> int:
         )
         robot.apply_wheel_actions(np.zeros(2, dtype=np.float32))
         app_utils.update_app(steps=5)
+        if live is not None:
+            succeeded = payload["status"] == "succeeded"
+            live.publish_state(
+                state="succeeded" if succeeded else "failed",
+                message=(
+                    "任务完成：机器人已完成导航、找物、对齐、拿取验证并返回。"
+                    if succeeded
+                    else f"任务未完成：{payload['message']}"
+                ),
+                frame=session.live_frame,
+                action="COMPLETE" if succeeded else "FAILED",
+                pose=session.pose,
+                linear=0.0,
+                angular=0.0,
+                waypoint=max(0, len(path) - 1),
+                waypoint_count=max(0, len(path) - 1),
+                result=payload,
+            )
+            source = overview_camera or camera
+            final_image = camera_rgb(source) if source is not None else None
+            if final_image is not None:
+                live.publish_image(final_image)
         app_utils.stop()
         print(
             "Dual-agent result: "

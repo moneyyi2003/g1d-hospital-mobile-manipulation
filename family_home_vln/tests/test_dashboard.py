@@ -62,6 +62,19 @@ class FamilyHomeDashboardSessionTest(unittest.TestCase):
             }, ensure_ascii=False),
             encoding="utf-8",
         )
+        (artifacts / "objects_formal.json").write_text(
+            json.dumps({
+                "schema_version": 1,
+                "objects": [{
+                    "object_id": "scan_cup_06",
+                    "source_label": "cup",
+                    "aliases": ["杯子", "水杯"],
+                    "status": "approved",
+                    "manipulation_ready": True,
+                }],
+            }, ensure_ascii=False),
+            encoding="utf-8",
+        )
         survey_manifest = artifacts / "survey/capture_manifest.json"
         survey_manifest.parent.mkdir(parents=True)
         survey_manifest.write_text(
@@ -239,6 +252,20 @@ class FamilyHomeDashboardSessionTest(unittest.TestCase):
             self.assertGreaterEqual(len(path), 2)
             with self.assertRaises(ValueError):
                 session.plan("请带我去阳台")
+
+    def test_interpret_compiles_dual_brain_household_task(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.write_formal_bundle(root)
+            session = self.make_session(root)
+
+            result = session.interpret(
+                "请带我去餐桌，拿杯子，再回到客厅沙发旁"
+            )
+
+            self.assertEqual(result["mode"], "dual_brain_task")
+            self.assertIn("OPENVLA_PICK", result["steps"])
+            self.assertGreaterEqual(len(result["path"]), 2)
 
     def test_changed_household_object_set_keeps_report_but_blocks_navigation(self):
         with tempfile.TemporaryDirectory() as directory:

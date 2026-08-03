@@ -7,7 +7,7 @@
       name="description"
       content="G1-D 家庭场景语言导航、点云、语义、占据栅格和区域实时控制台"
     />
-    <title>G1-D Home Navigation Console</title>
+    <title>G1-D Dual Brain Task Console</title>
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
@@ -16,7 +16,7 @@
         <span class="brand-mark">G1</span>
         <div>
           <p class="eyebrow">ISAAC SIM 6.0 · FAMILY HOME · LIVE MISSION</p>
-          <h1>G1-D 家庭导航控制台</h1>
+          <h1>G1-D 家庭任务控制台</h1>
         </div>
       </div>
       <div class="header-status">
@@ -29,19 +29,19 @@
       <section class="mission-panel">
         <div class="mission-copy">
           <span class="section-index">MISSION / 01</span>
-          <h2>告诉机器人要去哪里</h2>
-          <p>网页立即读取已有扫描制品；只有提交任务后才启动 Isaac Sim。</p>
+          <h2>告诉机器人要完成什么</h2>
+          <p>Agent 理解自然语言，并在审核地图上组织导航、找物、对齐、拿取和返回。</p>
         </div>
         <form id="commandForm">
-          <label for="commandInput">导航指令</label>
+          <label for="commandInput">自然语言任务</label>
           <div class="command-row">
             <input
               id="commandInput"
-              value="请带我到客厅沙发旁"
+              value="请带我去餐厅，拿杯子，再回到客厅沙发旁"
               autocomplete="off"
               aria-label="家庭导航指令"
             />
-            <button id="submitButton" type="submit">开始导航</button>
+            <button id="submitButton" type="submit">执行任务</button>
             <button id="cancelButton" type="button" class="ghost">停止</button>
           </div>
           <div id="placeChips" class="chips" aria-label="快捷地点"></div>
@@ -50,6 +50,7 @@
           <span>任务状态</span>
           <p id="message">正在连接家庭导航服务…</p>
           <div class="progress"><i id="progressBar"></i></div>
+          <div id="agentStages" class="agent-stages" aria-label="Agent 执行阶段"></div>
         </div>
       </section>
 
@@ -58,7 +59,7 @@
           <div class="panel-head">
             <div>
               <span class="section-index">LIVE / 02</span>
-              <h2>Isaac Sim 导航画面</h2>
+              <h2>Isaac Sim 机器人实时行为</h2>
             </div>
               <span class="panel-meta">RTX OVERVIEW · MJPEG</span>
           </div>
@@ -84,8 +85,8 @@
             </div>
           </div>
           <dl class="telemetry">
-            <div><dt>目标地点</dt><dd id="task">—</dd></div>
-            <div><dt>控制动作</dt><dd id="action">—</dd></div>
+            <div><dt>任务目标</dt><dd id="task">—</dd></div>
+            <div><dt>Agent 技能</dt><dd id="action">—</dd></div>
             <div><dt>地图坐标</dt><dd id="pose">—</dd></div>
             <div><dt>底盘速度</dt><dd id="velocity">—</dd></div>
             <div><dt>路径航点</dt><dd id="waypoint">—</dd></div>

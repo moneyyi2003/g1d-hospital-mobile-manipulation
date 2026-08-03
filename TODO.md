@@ -29,7 +29,17 @@ backend。公开 OpenVLA-7B 仍只提供未标定的 BridgeData 动作建议；�
 审核锚点驱动的有界 IK 和显式 PhysX 固定约束。面向 G1-D 微调/标定的 VLA、场景与
 自碰撞 IK、真机手部控制和独立真机操作验证仍未交付。
 
+家庭 6012 控制台现已接入 Dual Brain 复合任务：页面可输入普通地点导航或
+“去—拿—返回”，并实时显示 Isaac 第三人称行为、Agent 阶段、轨迹和四层正式地图。
+2026-08-03 网页端实跑完成导航、RGB 找杯、两级对齐和 OpenVLA 推理；该次抓取因
+约束吸附位移 0.054 m 超过 0.04 m 安全门，重试 IK 误差 0.038 m 超过 0.025 m 门槛而
+fail-closed。近期仿真下一步仍是场景/自碰撞 IK 与抓取鲁棒性，而不是降低安全阈值。
+
 ## 已完成并验证
+
+- [x] 家庭 6012 网页升级为自然语言任务控制台，复用正式 VLN，并把复合指令路由到
+  同一 Isaac SimulationApp 的 `NAVIGATE -> SEARCH_OBJECT -> APPROACH_AND_ALIGN ->
+  OPENVLA_PICK -> VERIFY -> RETURN`；第三人称 MJPEG 和 Agent 状态实时可见。
 
 - [x] 下载并安装当前 Isaac Sim 6.0.1-rc.7 standalone，Python 3.12.13 可用。
 - [x] 建立 MobileManiBench Python 3.10.20 独立环境及统一入口
