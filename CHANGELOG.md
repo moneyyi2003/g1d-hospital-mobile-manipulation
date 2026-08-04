@@ -10,8 +10,10 @@
 - `run_g1d_simple_room_vln.py` 新增 `--interactive-port` / `--interactive-host`。
   该模式在已加载的 SimpleRoom GUI 中启动本地控制页；HTTP 线程仅接收和排队命令，
   所有 USD、PhysX、相机与轮控操作仍由同一个 Isaac 主线程完成，避免跨线程 Kit 调用。
-- 每条命令从机器人当前位姿重新规划，完成后保留场景和 GUI，可连续输入下一条；当前仅
-  支持 SimpleRoom 单地点导航，拒绝 survey、Dual Brain、家庭任务和右臂 probe 的组合。
+- 每条命令从机器人当前位姿重新规划，完成后保留场景和 GUI，可连续输入下一条；支持
+  SimpleRoom 或 `--scene-profile family-home` 的单地点导航。家庭交互模式强制使用正式
+  LingBot map/审核地点库，并拒绝 `--allow-bootstrap`；仍拒绝 survey、Dual Brain、家庭
+  复合任务和右臂 probe 的组合。
 - 本机 Docker GUI 使用 Xvfb + password-protected noVNC 提供 6080/TCP 桌面；控制页默认
   绑定 127.0.0.1:6013，预期经 SSH tunnel 暴露，不依赖不可达的 WebRTC UDP 链路。
 
@@ -21,6 +23,8 @@
 - 在同一 noVNC 可见 Isaac SimulationApp 中，控制页 HTTP 状态实际经历
   `idle -> queued -> running -> succeeded`；提交“请带我到沙发旁边”后到达 `sofa_side`，
   位置误差 `0.119 m`。
+- 家庭正式制品（map、审核地点/对象、semantic metadata、家庭 USD 资产）存在性已核对，
+  `--scene-profile family-home` GUI 已加载并进入控制页 `idle`。
 
 已知限制：
 

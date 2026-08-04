@@ -65,11 +65,10 @@ mission 明确为 `dining_area -> scan_coffee_cup_05 -> bedroom_bed`，最终携
   `mobilemanibench.sh`。
 - [x] G1-D URDF 已转换为分层 USD，并完成关节/刚体基本加载工具。
 - [x] SimpleRoom 中英文地点解析、路径规划和确定性导航演示成功。
-- [x] SimpleRoom 桌面交互控制：同一 Isaac `SimulationApp` 现可在空闲时通过本地
-  HTTP 输入框接收中文导航指令；网页线程只入队，主仿真线程执行规划和轮控。noVNC
-  桌面与控制页已实测同会话联动，“请带我到沙发旁边”到达 `sofa_side`，位置误差
-  `0.119 m`。当前控制页仅开放 SimpleRoom 审核地点，绑定 `127.0.0.1`，应经 SSH
-  隧道访问。
+- [x] 桌面交互控制：同一 Isaac `SimulationApp` 现可在空闲时通过本地 HTTP 输入框
+  接收中文单地点导航指令；网页线程只入队，主仿真线程执行规划和轮控。noVNC 桌面与
+  控制页已实测同会话联动；家庭 profile 必须使用正式 LingBot map/审核地点库并拒绝
+  `--allow-bootstrap`，绑定 `127.0.0.1`，应经 SSH 隧道访问。
 - [x] Hospital 前台/候诊区 ROI 加载和 G1-D 头部 RGB 巡检成功。
 - [x] LingBot-Map RGB-only 推理、米制对齐、彩色点云和 ROS occupancy map 已生成。
 - [x] 正式地点库已审核开放 `reception` 和 `waiting_area`。

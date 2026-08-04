@@ -258,7 +258,16 @@ if args.interactive_port is not None and (
     args.survey or args.dual_agent or args.family_task or args.right_arm_probe
 ):
     raise SystemExit(
-        "--interactive-port is currently for standalone SimpleRoom navigation only"
+        "--interactive-port is currently for single-place navigation only"
+    )
+if (
+    args.interactive_port is not None
+    and args.scene_profile == "family-home"
+    and args.allow_bootstrap
+):
+    raise SystemExit(
+        "family-home interactive navigation requires the reviewed formal map; "
+        "do not pass --allow-bootstrap"
     )
 if args.dual_agent and args.scene_profile != "family-home":
     raise SystemExit("--dual-agent currently requires --scene-profile family-home")
@@ -2788,14 +2797,30 @@ class InteractiveCommandServer:
 
 _INTERACTIVE_COMMAND_PAGE = """<!doctype html>
 <html lang=\"zh-CN\"><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">
-<title>G1-D SimpleRoom 控制台</title>
+<title>G1-D 导航控制台</title>
 <style>body{max-width:720px;margin:48px auto;padding:0 18px;font:16px system-ui;background:#10151b;color:#e9eef4}input,button{font:inherit;padding:12px;border-radius:8px}input{width:min(500px,70%)}button{margin-left:8px;background:#70d6a6;border:0;color:#092016;font-weight:700}#state{margin-top:24px;padding:16px;background:#19232e;border-radius:8px;white-space:pre-wrap}.hint{color:#aab9c9}</style>
-<h1>G1-D SimpleRoom</h1><p class=\"hint\">提交后，在 noVNC 的 Isaac Sim 桌面观察同一机器人运动。</p>
+<h1>G1-D 导航控制台</h1><p class=\"hint\">提交后，在 noVNC 的 Isaac Sim 桌面观察同一机器人运动。</p>
 <form id=\"form\"><input id=\"command\" autofocus value=\"请带我到沙发旁边\" aria-label=\"导航指令\"><button>执行导航</button></form><pre id=\"state\">正在连接…</pre>
 <script>const s=document.querySelector('#state'),i=document.querySelector('#command');async function poll(){try{let r=await fetch('/api/state'),x=await r.json();s.textContent=`状态：${x.state}\\n${x.message}\\n指令：${x.command||'—'}\\n目标：${x.target||'—'}`}catch(e){s.textContent='控制服务暂不可用：'+e}}document.querySelector('#form').onsubmit=async e=>{e.preventDefault();let r=await fetch('/api/command',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({command:i.value})});let x=await r.json();if(x.error)alert(x.error);poll()};poll();setInterval(poll,500);</script></html>"""
 
 
-def run_interactive_simple_room_session(
+def update_interactive_goal_visual(path: list[tuple[float, float]], target: Pose2D) -> None:
+    """Update the existing target and route without reloading the USD scene."""
+
+    stage = stage_utils.get_current_stage()
+    goal = stage.GetPrimAtPath("/World/VLN/Goal")
+    if goal.IsValid():
+        ops = UsdGeom.Xformable(goal).GetOrderedXformOps()
+        if ops:
+            ops[0].Set(Gf.Vec3d(target.x, target.y, ROOM_FLOOR_Z_M + 0.025))
+    route = UsdGeom.BasisCurves(stage.GetPrimAtPath("/World/VLN/PlannedPath"))
+    route.CreateCurveVertexCountsAttr([len(path)])
+    route.CreatePointsAttr(
+        [Gf.Vec3f(x, y, ROOM_FLOOR_Z_M + 0.045) for x, y in path]
+    )
+
+
+def run_interactive_navigation_session(
     robot, camera, grid, places, pose: Pose2D,
 ) -> int:
     """Keep the current GUI scene alive and execute queued navigation commands."""
@@ -2803,7 +2828,7 @@ def run_interactive_simple_room_session(
     server = InteractiveCommandServer(args.interactive_host, args.interactive_port)
     server.start()
     print(
-        "Interactive SimpleRoom control page: "
+        "Interactive navigation control page: "
         f"http://{args.interactive_host}:{args.interactive_port}/"
     )
     print("Open the noVNC desktop separately to watch this same SimulationApp.")
@@ -2825,6 +2850,7 @@ def run_interactive_simple_room_session(
                     command=command,
                 )
                 continue
+            update_interactive_goal_visual(path, target.pose)
             follower = PathFollower(
                 path, goal_yaw=target.pose.yaw, max_linear=0.45, max_angular=1.10,
             )
@@ -3117,11 +3143,7 @@ def main() -> int:
         app_utils.update_app(steps=20)
 
     if args.interactive_port is not None:
-        if args.scene_profile != "simple-room":
-            raise ValueError(
-                "--interactive-port currently exposes the SimpleRoom place catalog only"
-            )
-        return run_interactive_simple_room_session(
+        return run_interactive_navigation_session(
             robot, camera, grid, places, pose,
         )
 
