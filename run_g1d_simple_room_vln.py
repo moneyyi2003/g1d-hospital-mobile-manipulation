@@ -16,13 +16,17 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+from http import HTTPStatus
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import math
 import os
 from pathlib import Path
+import queue
 import shutil
 import subprocess
 import sys
+import threading
 import time
 from typing import Callable, Sequence
 
@@ -76,6 +80,19 @@ def parse_args() -> argparse.Namespace:
         help="Use the original single room or the multi-zone family-home layout",
     )
     parser.add_argument("--headless", action="store_true")
+    parser.add_argument(
+        "--interactive-port",
+        type=int,
+        help=(
+            "Serve a local command page and execute submitted SimpleRoom navigation "
+            "commands in this same Isaac SimulationApp."
+        ),
+    )
+    parser.add_argument(
+        "--interactive-host",
+        default="127.0.0.1",
+        help="Bind host for --interactive-port (default: 127.0.0.1).",
+    )
     parser.add_argument("--test", action="store_true", help="Headless end-to-end assertion")
     parser.add_argument("--survey", action="store_true", help="Collect a LingBot-ready RGB survey")
     parser.add_argument("--command", default="请带我到沙发旁边")
@@ -235,6 +252,14 @@ if live_width <= 0 or live_height <= 0:
     raise SystemExit("--live-resolution dimensions must be positive")
 if args.live_search_frames < 3 or args.live_search_frames > 24:
     raise SystemExit("--live-search-frames must be between 3 and 24")
+if args.interactive_port is not None and not 1 <= args.interactive_port <= 65535:
+    raise SystemExit("--interactive-port must be between 1 and 65535")
+if args.interactive_port is not None and (
+    args.survey or args.dual_agent or args.family_task or args.right_arm_probe
+):
+    raise SystemExit(
+        "--interactive-port is currently for standalone SimpleRoom navigation only"
+    )
 if args.dual_agent and args.scene_profile != "family-home":
     raise SystemExit("--dual-agent currently requires --scene-profile family-home")
 
@@ -2664,6 +2689,192 @@ def run_dual_agent_session(session: FamilyHomeDualAgentSession) -> dict:
     return payload
 
 
+class InteractiveCommandServer:
+    """Thread-safe HTTP command ingress for a live SimpleRoom SimulationApp.
+
+    The HTTP worker never accesses USD, PhysX, or Kit.  The main Isaac thread
+    drains ``commands`` and owns every simulation mutation.
+    """
+
+    def __init__(self, host: str, port: int) -> None:
+        self.commands: queue.Queue[str] = queue.Queue()
+        self._lock = threading.RLock()
+        self._state: dict[str, object] = {
+            "state": "idle",
+            "message": "Isaac 已就绪；请输入导航指令。",
+            "command": "",
+            "target": "",
+            "updated_at": time.time(),
+        }
+        owner = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, _format: str, *_args: object) -> None:
+                return
+
+            def _send_json(self, payload: dict, status: HTTPStatus = HTTPStatus.OK) -> None:
+                body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def do_GET(self) -> None:  # noqa: N802
+                path = self.path.split("?", 1)[0]
+                if path == "/api/state":
+                    self._send_json(owner.state())
+                    return
+                if path != "/":
+                    self.send_error(HTTPStatus.NOT_FOUND)
+                    return
+                body = _INTERACTIVE_COMMAND_PAGE.encode("utf-8")
+                self.send_response(HTTPStatus.OK)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def do_POST(self) -> None:  # noqa: N802
+                if self.path.split("?", 1)[0] != "/api/command":
+                    self.send_error(HTTPStatus.NOT_FOUND)
+                    return
+                try:
+                    size = int(self.headers.get("Content-Length", "0"))
+                    payload = json.loads(self.rfile.read(size).decode("utf-8"))
+                    command = str(payload.get("command", "")).strip()
+                except (UnicodeDecodeError, ValueError, json.JSONDecodeError):
+                    self._send_json({"error": "命令必须是 JSON。"}, HTTPStatus.BAD_REQUEST)
+                    return
+                if not command:
+                    self._send_json({"error": "请输入导航指令。"}, HTTPStatus.BAD_REQUEST)
+                    return
+                owner.submit(command)
+                self._send_json(owner.state(), HTTPStatus.ACCEPTED)
+
+        self._httpd = ThreadingHTTPServer((host, port), Handler)
+        self._thread = threading.Thread(
+            target=self._httpd.serve_forever,
+            name="simple-room-command-http",
+            daemon=True,
+        )
+
+    def start(self) -> None:
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._httpd.shutdown()
+        self._httpd.server_close()
+        self._thread.join(timeout=2.0)
+
+    def state(self) -> dict:
+        with self._lock:
+            return dict(self._state)
+
+    def update(self, **values: object) -> None:
+        with self._lock:
+            self._state.update(values)
+            self._state["updated_at"] = time.time()
+
+    def submit(self, command: str) -> None:
+        self.commands.put(command)
+        self.update(
+            state="queued",
+            message="指令已排队，等待 Isaac 仿真线程执行。",
+            command=command,
+            target="",
+        )
+
+
+_INTERACTIVE_COMMAND_PAGE = """<!doctype html>
+<html lang=\"zh-CN\"><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">
+<title>G1-D SimpleRoom 控制台</title>
+<style>body{max-width:720px;margin:48px auto;padding:0 18px;font:16px system-ui;background:#10151b;color:#e9eef4}input,button{font:inherit;padding:12px;border-radius:8px}input{width:min(500px,70%)}button{margin-left:8px;background:#70d6a6;border:0;color:#092016;font-weight:700}#state{margin-top:24px;padding:16px;background:#19232e;border-radius:8px;white-space:pre-wrap}.hint{color:#aab9c9}</style>
+<h1>G1-D SimpleRoom</h1><p class=\"hint\">提交后，在 noVNC 的 Isaac Sim 桌面观察同一机器人运动。</p>
+<form id=\"form\"><input id=\"command\" autofocus value=\"请带我到沙发旁边\" aria-label=\"导航指令\"><button>执行导航</button></form><pre id=\"state\">正在连接…</pre>
+<script>const s=document.querySelector('#state'),i=document.querySelector('#command');async function poll(){try{let r=await fetch('/api/state'),x=await r.json();s.textContent=`状态：${x.state}\\n${x.message}\\n指令：${x.command||'—'}\\n目标：${x.target||'—'}`}catch(e){s.textContent='控制服务暂不可用：'+e}}document.querySelector('#form').onsubmit=async e=>{e.preventDefault();let r=await fetch('/api/command',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({command:i.value})});let x=await r.json();if(x.error)alert(x.error);poll()};poll();setInterval(poll,500);</script></html>"""
+
+
+def run_interactive_simple_room_session(
+    robot, camera, grid, places, pose: Pose2D,
+) -> int:
+    """Keep the current GUI scene alive and execute queued navigation commands."""
+
+    server = InteractiveCommandServer(args.interactive_host, args.interactive_port)
+    server.start()
+    print(
+        "Interactive SimpleRoom control page: "
+        f"http://{args.interactive_host}:{args.interactive_port}/"
+    )
+    print("Open the noVNC desktop separately to watch this same SimulationApp.")
+    try:
+        while simulation_app.is_running():
+            try:
+                command = server.commands.get_nowait()
+            except queue.Empty:
+                robot.apply_wheel_actions(np.zeros(2, dtype=np.float32))
+                simulation_app.update()
+                continue
+            try:
+                target = resolve_place(command, places)
+                path = grid.plan((pose.x, pose.y), (target.pose.x, target.pose.y))
+            except Exception as exc:
+                server.update(
+                    state="rejected",
+                    message=f"指令未执行：{type(exc).__name__}: {exc}",
+                    command=command,
+                )
+                continue
+            follower = PathFollower(
+                path, goal_yaw=target.pose.yaw, max_linear=0.45, max_angular=1.10,
+            )
+            server.update(
+                state="running", command=command, target=target.place_id,
+                message=f"正在前往 {target.place_id}。",
+            )
+            frame = 0
+            while simulation_app.is_running() and not follower.done:
+                observed = robot_pose(robot) if args.wheel_physics_only else pose
+                linear, angular, label = follower.command(observed)
+                robot.apply_wheel_actions(command_to_wheel_velocities(linear, angular))
+                if not args.wheel_physics_only:
+                    pose = assisted_step(pose, linear, angular)
+                    set_assisted_robot_pose(robot, pose, linear, angular)
+                if camera is not None:
+                    camera.set_world_pose(
+                        *camera_world_pose(
+                            observed if args.wheel_physics_only else pose
+                        ),
+                        camera_axes="world",
+                    )
+                simulation_app.update()
+                frame += 1
+                if frame % 10 == 0:
+                    server.update(
+                        state="running",
+                        message=(
+                            f"正在导航：{label}，航点 "
+                            f"{follower.index}/{len(path) - 1}。"
+                        ),
+                    )
+            robot.apply_wheel_actions(np.zeros(2, dtype=np.float32))
+            app_utils.update_app(steps=5)
+            pose = robot_pose(robot) if args.wheel_physics_only else pose
+            error = math.dist((pose.x, pose.y), path[-1])
+            server.update(
+                state="succeeded" if follower.done else "failed",
+                message=(
+                    f"已到达 {target.place_id}，位置误差 {error:.3f} m。"
+                    if follower.done
+                    else "Isaac 在到达前停止了本次导航。"
+                ),
+            )
+    finally:
+        robot.apply_wheel_actions(np.zeros(2, dtype=np.float32))
+        server.stop()
+    return 0
+
+
 def main() -> int:
     args.output_dir.mkdir(parents=True, exist_ok=True)
     if args.right_arm_probe:
@@ -2904,6 +3115,15 @@ def main() -> int:
             camera_axes="world",
         )
         app_utils.update_app(steps=20)
+
+    if args.interactive_port is not None:
+        if args.scene_profile != "simple-room":
+            raise ValueError(
+                "--interactive-port currently exposes the SimpleRoom place catalog only"
+            )
+        return run_interactive_simple_room_session(
+            robot, camera, grid, places, pose,
+        )
 
     if args.right_arm_probe:
         probe_path = args.output_dir / "g1d_right_arm_probe.json"

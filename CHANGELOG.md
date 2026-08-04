@@ -3,6 +3,31 @@
 本文件记录能够影响复现、行为、接口或任务状态的重要变更。日期使用 UTC；生成物刷新和
 无行为影响的小改动不单独记录。
 
+## 2026-08-04
+
+### SimpleRoom 同会话网页命令与 Isaac 桌面
+
+- `run_g1d_simple_room_vln.py` 新增 `--interactive-port` / `--interactive-host`。
+  该模式在已加载的 SimpleRoom GUI 中启动本地控制页；HTTP 线程仅接收和排队命令，
+  所有 USD、PhysX、相机与轮控操作仍由同一个 Isaac 主线程完成，避免跨线程 Kit 调用。
+- 每条命令从机器人当前位姿重新规划，完成后保留场景和 GUI，可连续输入下一条；当前仅
+  支持 SimpleRoom 单地点导航，拒绝 survey、Dual Brain、家庭任务和右臂 probe 的组合。
+- 本机 Docker GUI 使用 Xvfb + password-protected noVNC 提供 6080/TCP 桌面；控制页默认
+  绑定 127.0.0.1:6013，预期经 SSH tunnel 暴露，不依赖不可达的 WebRTC UDP 链路。
+
+验证：
+
+- `python3 -m py_compile run_g1d_simple_room_vln.py` 与 `git diff --check` 通过。
+- 在同一 noVNC 可见 Isaac SimulationApp 中，控制页 HTTP 状态实际经历
+  `idle -> queued -> running -> succeeded`；提交“请带我到沙发旁边”后到达 `sofa_side`，
+  位置误差 `0.119 m`。
+
+已知限制：
+
+- noVNC 是临时 Docker 容器配置；重建镜像前会在下次桌面启动时重新安装其依赖。
+- 当前页面是最小导航控制台，没有取消按钮、身份认证或家庭任务支持；端口保持 loopback
+  绑定，不能直接暴露到公网。
+
 ## 2026-08-03
 
 ### 复核 G1-D 正向与预抓取姿态
