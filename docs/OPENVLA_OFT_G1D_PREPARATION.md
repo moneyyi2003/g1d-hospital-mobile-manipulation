@@ -6,6 +6,9 @@ trajectories. It does not train from a directory of PNG files alone.
 ## Frozen data contract
 
 - Observation: `640x480` RGB from the ego-centric G1-D head camera.
+- Pinhole intrinsics: 50 mm focal length, `fx=1527.0818`, `fy=1527.0819`,
+  `cx=320`, `cy=240`; clipping range is explicitly frozen to
+  `[0.1 m, 1,000,000 m]` for newly collected trajectories.
 - Rate: 10 Hz.
 - Training image: `step_NNNN/image.png` only. `third_person.png` is audit
   evidence and is never passed to OpenVLA-OFT.
@@ -17,6 +20,10 @@ trajectories. It does not train from a directory of PNG files alone.
 - Accepted episodes must pass Expert success, physical execution, at least
   10 cm lift, 30 stable-hold frames, RGB black-region checks, and action-range
   checks.
+
+Trajectories collected with the former 1.0 m near clipping plane are kept in
+`expert_demos_head`; new 0.1 m trajectories are isolated in
+`expert_demos_head_clip01`. Do not silently merge the two camera domains.
 
 The deployed controller must preserve the same world-frame delta and gripper
 conventions when it unnormalizes OFT output. Coordinate conversion belongs in

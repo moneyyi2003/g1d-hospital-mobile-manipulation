@@ -24,7 +24,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--demo-dir",
         type=Path,
-        default=ROOT / "outputs/family_home_vln/expert_demos_head",
+        default=ROOT / "outputs/family_home_vln/expert_demos_head_clip01",
     )
     parser.add_argument("--manifest", type=Path, default=ROOT / "outputs/family_home_vln/openvla_oft/manifest.json")
     parser.add_argument("--model", type=str, default=str(ROOT / "checkpoints/openvla-7b"))

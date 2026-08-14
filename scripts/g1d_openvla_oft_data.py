@@ -35,6 +35,8 @@ ACTION_FRAME = "world"
 GRIPPER_CONVENTION = "1=open,0=closed"
 EXPECTED_IMAGE_SIZE = (640, 480)
 EXPECTED_CAPTURE_HZ = 10
+EXPECTED_NEAR_CLIP_M = 0.1
+EXPECTED_FAR_CLIP_M = 1_000_000.0
 IGNORE_INDEX = -100
 
 
@@ -95,6 +97,25 @@ def build_manifest(demo_dir: Path, manifest_path: Path) -> dict[str, Any]:
             if int(meta.get("capture_hz", 0)) != EXPECTED_CAPTURE_HZ:
                 raise ValueError(
                     f"capture rate is not {EXPECTED_CAPTURE_HZ} Hz"
+                )
+            intrinsics = meta.get("camera_intrinsics") or {}
+            if not math.isclose(
+                float(intrinsics.get("near_clip_m", -1.0)),
+                EXPECTED_NEAR_CLIP_M,
+                rel_tol=0.0,
+                abs_tol=1e-6,
+            ):
+                raise ValueError(
+                    f"near clipping plane is not {EXPECTED_NEAR_CLIP_M} m"
+                )
+            if not math.isclose(
+                float(intrinsics.get("far_clip_m", -1.0)),
+                EXPECTED_FAR_CLIP_M,
+                rel_tol=0.0,
+                abs_tol=1e-3,
+            ):
+                raise ValueError(
+                    f"far clipping plane is not {EXPECTED_FAR_CLIP_M} m"
                 )
 
             step_dirs = sorted(episode.glob("step_*"))
@@ -183,6 +204,8 @@ def build_manifest(demo_dir: Path, manifest_path: Path) -> dict[str, Any]:
             "camera_mode": "ego_centric_head",
             "image_size": list(EXPECTED_IMAGE_SIZE),
             "capture_hz": EXPECTED_CAPTURE_HZ,
+            "near_clip_m": EXPECTED_NEAR_CLIP_M,
+            "far_clip_m": EXPECTED_FAR_CLIP_M,
             "third_person_used_for_training": False,
         },
         "episode_count": len(accepted),

@@ -80,6 +80,19 @@ CAMERA_FORWARD_OFFSET_M = 0.25
 # image centre with this fixed sensor-frame correction.
 CAMERA_YAW_OFFSET_RAD = math.radians(-15.0)
 CAMERA_DOWNWARD_PITCH_RAD = math.radians(61.0)
+# Freeze the optical model for reproducible OpenVLA-OFT observations.  The
+# USD fallback near plane is 1.0 m, which can clip the G1-D hand during close
+# manipulation.  Keep the far plane unchanged and explicitly bring near to
+# 10 cm.
+CAMERA_FOCAL_LENGTH_MM = 50.0
+CAMERA_HORIZONTAL_APERTURE_MM = 20.955
+CAMERA_VERTICAL_APERTURE_MM = 15.71625
+CAMERA_NEAR_CLIP_M = 0.1
+CAMERA_FAR_CLIP_M = 1_000_000.0
+CAMERA_FX_PX = 1527.0818
+CAMERA_FY_PX = 1527.0819
+CAMERA_CX_PX = 320.0
+CAMERA_CY_PX = 240.0
 
 RIGHT_PALM_LINK = "right_hand_palm_link"
 RIGHT_HAND_JOINTS = (
@@ -588,9 +601,24 @@ def _create_head_camera(robot_x: float, robot_y: float, robot_yaw: float):
         resolution=(640, 480),
     )
     cam.initialize()
+    cam.set_clipping_range(
+        near_distance=CAMERA_NEAR_CLIP_M,
+        far_distance=CAMERA_FAR_CLIP_M,
+    )
     import isaacsim.core.experimental.utils.app as _app_utils
 
     _app_utils.update_app(steps=10)
+    clipping_range = tuple(float(value) for value in cam.get_clipping_range())
+    if not np.allclose(
+        clipping_range,
+        (CAMERA_NEAR_CLIP_M, CAMERA_FAR_CLIP_M),
+        rtol=0.0,
+        atol=1e-6,
+    ):
+        raise RuntimeError(
+            "head camera clipping range was not applied: "
+            f"{clipping_range}"
+        )
     return cam
 
 
@@ -1615,6 +1643,20 @@ def run_collection(args: argparse.Namespace) -> int:
                 "downward_pitch_deg": args.camera_pitch_deg,
                 "shared_for": ["vln_navigation", "vla_manipulation"],
             },
+            "camera_intrinsics": {
+                "model": "pinhole",
+                "resolution": [640, 480],
+                "focal_length_mm": CAMERA_FOCAL_LENGTH_MM,
+                "horizontal_aperture_mm": CAMERA_HORIZONTAL_APERTURE_MM,
+                "vertical_aperture_mm": CAMERA_VERTICAL_APERTURE_MM,
+                "fx_px": CAMERA_FX_PX,
+                "fy_px": CAMERA_FY_PX,
+                "cx_px": CAMERA_CX_PX,
+                "cy_px": CAMERA_CY_PX,
+                "near_clip_m": CAMERA_NEAR_CLIP_M,
+                "far_clip_m": CAMERA_FAR_CLIP_M,
+                "distortion": [],
+            },
             "rgb_quality_gate_version": 2,
             "expert_source": "machuanhao_dls_ik",
         }
@@ -1661,6 +1703,17 @@ def run_collection(args: argparse.Namespace) -> int:
             "resolution": [640, 480],
             "camera": "head_camera_ego_centric",
             "shared_for": ["vln_navigation", "vla_manipulation"],
+            "intrinsics": {
+                "model": "pinhole",
+                "focal_length_mm": CAMERA_FOCAL_LENGTH_MM,
+                "fx_px": CAMERA_FX_PX,
+                "fy_px": CAMERA_FY_PX,
+                "cx_px": CAMERA_CX_PX,
+                "cy_px": CAMERA_CY_PX,
+                "near_clip_m": CAMERA_NEAR_CLIP_M,
+                "far_clip_m": CAMERA_FAR_CLIP_M,
+                "distortion": [],
+            },
         },
         "expert_source": "machuanhao_dls_ik",
         "capture_hz": 10,

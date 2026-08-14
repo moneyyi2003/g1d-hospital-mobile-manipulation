@@ -26,6 +26,10 @@ class OpenVLAOFTDataTest(unittest.TestCase):
             "ready_for_training": True,
             "camera_mode": "ego_centric_head",
             "capture_hz": 10,
+            "camera_intrinsics": {
+                "near_clip_m": 0.1,
+                "far_clip_m": 1_000_000.0,
+            },
             "expert_evidence": {
                 "success": True,
                 "physical_execution": True,
