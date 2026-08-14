@@ -166,6 +166,15 @@ def parse_args() -> argparse.Namespace:
                    help="Run without the Isaac Sim GUI")
     p.add_argument("--seed", type=int, default=42,
                    help="Random seed for reproducibility")
+    p.add_argument(
+        "--start-index",
+        type=int,
+        default=None,
+        help=(
+            "First episode index. By default, append after the highest existing "
+            "episode_NNNN directory without overwriting accepted data."
+        ),
+    )
     p.add_argument("--base-variation-xy-m", type=float, default=0.05,
                    help="Random XY jitter for robot base pose (m)")
     p.add_argument("--base-variation-yaw-deg", type=float, default=5.0,
@@ -942,14 +951,42 @@ def run_collection(args: argparse.Namespace) -> int:
         raise ValueError("--camera-pitch-deg must be between -80 and 80")
     ACTIVE_CAMERA_PITCH_RAD = math.radians(args.camera_pitch_deg)
 
-    rng = np.random.default_rng(args.seed)
     args.output_dir.mkdir(parents=True, exist_ok=True)
+    existing_indices = []
+    for path in args.output_dir.glob("episode_*"):
+        if path.is_dir():
+            try:
+                existing_indices.append(int(path.name.removeprefix("episode_")))
+            except ValueError:
+                continue
+    start_index = (
+        int(args.start_index)
+        if args.start_index is not None
+        else (max(existing_indices, default=-1) + 1)
+    )
+    if start_index < 0:
+        raise ValueError("--start-index must be non-negative")
+    requested_indices = range(start_index, start_index + args.episodes)
+    collisions = [
+        index
+        for index in requested_indices
+        if (args.output_dir / f"episode_{index:04d}").exists()
+    ]
+    if collisions:
+        raise FileExistsError(
+            "refusing to overwrite existing accepted episodes: "
+            + ", ".join(f"episode_{index:04d}" for index in collisions)
+        )
+    # A resumed collection should not repeat the exact same randomization as
+    # episode_0000 from a previous process.
+    rng = np.random.default_rng(args.seed + start_index)
 
     print("=" * 60)
     print("G1-D First-Person Expert Demonstration Collection")
     print(f"  Episodes:  {args.episodes}")
     print(f"  Output:    {args.output_dir}")
     print(f"  Seed:      {args.seed}")
+    print(f"  Indices:   {start_index}..{start_index + args.episodes - 1}")
     print(
         "  Camera:    ego-centric head-mounted "
         f"({args.camera_pitch_deg:.1f}° downward, clear of torso/hand)"
@@ -1011,7 +1048,8 @@ def run_collection(args: argparse.Namespace) -> int:
     manifest_episodes: list[dict[str, Any]] = []
     successful = 0
 
-    for ep in range(args.episodes):
+    for run_offset in range(args.episodes):
+        episode_id = start_index + run_offset
         # ---- Randomize base pose -----------------------------------------
         base_x = ACTIVE_BASE_POSE[0] + rng.uniform(
             -args.base_variation_xy_m, args.base_variation_xy_m
@@ -1139,7 +1177,7 @@ def run_collection(args: argparse.Namespace) -> int:
             print("  Camera calibration sweep complete", flush=True)
             return 0
         print(
-            f"  Ep {ep:04d} | "
+            f"  Ep {episode_id:04d} | "
             f"base=({base_x:.2f},{base_y:.2f},{math.degrees(base_yaw):.0f}°) "
             f"cup=({cup_pos[0]:.2f},{cup_pos[1]:.2f}) "
             f"palm_z={palm_now[2]:.3f} ",
@@ -1171,8 +1209,8 @@ def run_collection(args: argparse.Namespace) -> int:
             "hand_indices": hand_indices,
         }
         # Capture frames are written to a pending staging dir first.
-        ep_dir = args.output_dir / f"episode_{ep:04d}"
-        pending_dir = args.output_dir / f".pending_ep_{ep:04d}"
+        ep_dir = args.output_dir / f"episode_{episode_id:04d}"
+        pending_dir = args.output_dir / f".pending_ep_{episode_id:04d}"
         # Clean up any stale artifacts from a previous collection run.
         import shutil
         if ep_dir.is_dir():
@@ -1448,7 +1486,7 @@ def run_collection(args: argparse.Namespace) -> int:
         }
 
         # ---- Run expert --------------------------------------------------
-        ep_output_dir = args.output_dir / f"expert_run_{ep:04d}"
+        ep_output_dir = args.output_dir / f"expert_run_{episode_id:04d}"
         ep_output_dir.mkdir(parents=True, exist_ok=True)
 
         from g1d_expert_bridge import run_expert_pick
@@ -1473,7 +1511,10 @@ def run_collection(args: argparse.Namespace) -> int:
             _rejected.mkdir(exist_ok=True)
             shutil.move(
                 str(pending_dir),
-                str(_rejected / f"rejected_ep_{ep:04d}_{int(time.time())}"),
+                str(
+                    _rejected
+                    / f"rejected_ep_{episode_id:04d}_{int(time.time())}"
+                ),
             )
             continue
 
@@ -1522,13 +1563,16 @@ def run_collection(args: argparse.Namespace) -> int:
             # Quarantine rejected episode — move pending dir to rejected/
             _rejected = args.output_dir / "rejected"
             _rejected.mkdir(exist_ok=True)
-            _rejected_path = _rejected / f"rejected_ep_{ep:04d}_{int(time.time())}"
+            _rejected_path = (
+                _rejected
+                / f"rejected_ep_{episode_id:04d}_{int(time.time())}"
+            )
             shutil.move(str(pending_dir), str(_rejected_path))
             meta_dir = _rejected_path
 
         # ---- Write episode meta.json -------------------------------------
         ep_meta = {
-            "episode_id": ep,
+            "episode_id": episode_id,
             "instruction": instruction,
             "object_id": (
                 "living_room_coffee_cup" if args.scene_profile == "living-room"
@@ -1588,6 +1632,16 @@ def run_collection(args: argparse.Namespace) -> int:
         _app_utils.update_app(steps=10)
 
     # ── Write manifest ───────────────────────────────────────────────────
+    # Rebuild the aggregate list from accepted episode directories so a
+    # resumed run appends to, rather than replaces, the dataset inventory.
+    aggregate_episodes: list[dict[str, Any]] = []
+    for episode_path in sorted(args.output_dir.glob("episode_*/meta.json")):
+        try:
+            aggregate_episodes.append(
+                json.loads(episode_path.read_text(encoding="utf-8"))
+            )
+        except (OSError, json.JSONDecodeError):
+            continue
     manifest = {
         "schema_version": 1,
         "task": f"{args.scene_profile}_cup_grasping_head_ego",
@@ -1612,16 +1666,17 @@ def run_collection(args: argparse.Namespace) -> int:
         "capture_hz": 10,
         "instructions": DEFAULT_INSTRUCTIONS,
         "summary": {
-            "total_episodes": args.episodes,
-            "successful_episodes": successful,
+            "collection_attempts_this_run": args.episodes,
+            "successful_episodes_this_run": successful,
+            "total_accepted_episodes": len(aggregate_episodes),
             "training_ready_episodes": sum(
-                1 for ep_m in manifest_episodes if ep_m.get("ready_for_training")
+                1 for ep_m in aggregate_episodes if ep_m.get("ready_for_training")
             ),
             "total_frames": sum(
-                ep_m["frame_count"] for ep_m in manifest_episodes
+                ep_m["frame_count"] for ep_m in aggregate_episodes
             ),
         },
-        "episodes": manifest_episodes,
+        "episodes": aggregate_episodes,
     }
     manifest_path = args.output_dir / "manifest.json"
     manifest_path.write_text(
