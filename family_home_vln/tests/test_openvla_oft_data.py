@@ -83,6 +83,14 @@ class OpenVLAOFTDataTest(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "unexpected unnorm_key"):
                 build_manifest(root, root / "manifest.json")
 
+    def test_discovers_nested_collection_shard(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._episode(root / "shard_gpu6")
+            payload = build_manifest(root, root / "manifest.json")
+            self.assertEqual(payload["episode_count"], 1)
+            self.assertEqual(payload["episodes"][0]["episode"], "shard_gpu6/episode_0000")
+
 
 if __name__ == "__main__":
     unittest.main()

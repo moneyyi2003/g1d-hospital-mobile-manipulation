@@ -78,7 +78,10 @@ def build_manifest(demo_dir: Path, manifest_path: Path) -> dict[str, Any]:
     rejected: list[dict[str, str]] = []
     all_actions: list[np.ndarray] = []
 
-    for episode in sorted(demo_dir.glob("episode_*")):
+    # A large collection may be produced by independent GPU workers under
+    # shard directories.  Accept both the original flat layout and nested
+    # episode directories, while deliberately excluding rejected_ep_*.
+    for episode in sorted(demo_dir.rglob("episode_*")):
         if not episode.is_dir():
             continue
         try:
@@ -158,7 +161,7 @@ def build_manifest(demo_dir: Path, manifest_path: Path) -> dict[str, Any]:
             all_actions.extend(episode_actions)
             accepted.append(
                 {
-                    "episode": episode.name,
+                    "episode": str(episode.relative_to(demo_dir)),
                     "instruction": str(meta.get("instruction") or "pick up the object"),
                     "object_id": str(meta.get("object_id") or ""),
                     "images": episode_images,

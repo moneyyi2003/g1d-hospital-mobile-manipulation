@@ -158,7 +158,16 @@ DEFAULT_INSTRUCTIONS = [
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--episodes", type=int, default=100,
-                   help="Number of demonstration episodes (default: 100)")
+                   help="Maximum number of collection attempts (default: 100)")
+    p.add_argument(
+        "--target-training-ready",
+        type=int,
+        default=None,
+        help=(
+            "Stop once this many accepted episodes exist in --output-dir. "
+            "Failed attempts are quarantined and do not count."
+        ),
+    )
     p.add_argument(
         "--scene-profile", choices=("family-home", "living-room"),
         default="family-home",
@@ -981,12 +990,13 @@ def run_collection(args: argparse.Namespace) -> int:
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
     existing_indices = []
-    for path in args.output_dir.glob("episode_*"):
-        if path.is_dir():
-            try:
-                existing_indices.append(int(path.name.removeprefix("episode_")))
-            except ValueError:
-                continue
+    for pattern, prefix in (("episode_*", "episode_"), ("expert_run_*", "expert_run_")):
+        for path in args.output_dir.glob(pattern):
+            if path.is_dir():
+                try:
+                    existing_indices.append(int(path.name.removeprefix(prefix)))
+                except ValueError:
+                    continue
     start_index = (
         int(args.start_index)
         if args.start_index is not None
@@ -1005,6 +1015,28 @@ def run_collection(args: argparse.Namespace) -> int:
             "refusing to overwrite existing accepted episodes: "
             + ", ".join(f"episode_{index:04d}" for index in collisions)
         )
+    existing_training_ready = 0
+    for meta_path in args.output_dir.glob("episode_*/meta.json"):
+        try:
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+            existing_training_ready += int(bool(meta.get("ready_for_training")))
+        except (OSError, ValueError, json.JSONDecodeError):
+            continue
+    if (
+        args.target_training_ready is not None
+        and args.target_training_ready <= 0
+    ):
+        raise ValueError("--target-training-ready must be positive")
+    if (
+        args.target_training_ready is not None
+        and existing_training_ready >= args.target_training_ready
+    ):
+        print(
+            f"Already have {existing_training_ready} training-ready episodes; "
+            f"target {args.target_training_ready} is met."
+        )
+        return 0
+
     # A resumed collection should not repeat the exact same randomization as
     # episode_0000 from a previous process.
     rng = np.random.default_rng(args.seed + start_index)
@@ -1015,6 +1047,12 @@ def run_collection(args: argparse.Namespace) -> int:
     print(f"  Output:    {args.output_dir}")
     print(f"  Seed:      {args.seed}")
     print(f"  Indices:   {start_index}..{start_index + args.episodes - 1}")
+    if args.target_training_ready is not None:
+        print(
+            "  Target:    "
+            f"{args.target_training_ready} accepted total "
+            f"({existing_training_ready} already present)"
+        )
     print(
         "  Camera:    ego-centric head-mounted "
         f"({args.camera_pitch_deg:.1f}° downward, clear of torso/hand)"
@@ -1075,8 +1113,16 @@ def run_collection(args: argparse.Namespace) -> int:
 
     manifest_episodes: list[dict[str, Any]] = []
     successful = 0
+    attempts_this_run = 0
+    training_ready_total = existing_training_ready
 
     for run_offset in range(args.episodes):
+        if (
+            args.target_training_ready is not None
+            and training_ready_total >= args.target_training_ready
+        ):
+            break
+        attempts_this_run += 1
         episode_id = start_index + run_offset
         # ---- Randomize base pose -----------------------------------------
         base_x = ACTIVE_BASE_POSE[0] + rng.uniform(
@@ -1565,6 +1611,7 @@ def run_collection(args: argparse.Namespace) -> int:
             # Rename pending to final episode dir
             pending_dir.rename(ep_dir)
             successful += 1
+            training_ready_total += 1
             meta_dir = ep_dir
             print(f"✓ ({frame_count} frames, lift={lift_height_m:.3f}m)")
         else:
@@ -1609,6 +1656,12 @@ def run_collection(args: argparse.Namespace) -> int:
             "base_pose": {"x": base_x, "y": base_y, "yaw": base_yaw},
             "cup_root_world_m": cup_pos.tolist(),
             "cup_grasp_target_world_m": target_world.tolist(),
+            "randomization": {
+                "base_variation_xy_m": args.base_variation_xy_m,
+                "base_variation_yaw_deg": args.base_variation_yaw_deg,
+                "cup_forward_jitter_m": 0.03,
+                "cup_right_bias_max_m": args.cup_right_bias_m,
+            },
             "success": expert_succeeded,
             "ready_for_training": accepted,
             "frame_count": frame_count,
@@ -1717,9 +1770,15 @@ def run_collection(args: argparse.Namespace) -> int:
         },
         "expert_source": "machuanhao_dls_ik",
         "capture_hz": 10,
+        "randomization": {
+            "base_variation_xy_m": args.base_variation_xy_m,
+            "base_variation_yaw_deg": args.base_variation_yaw_deg,
+            "cup_forward_jitter_m": 0.03,
+            "cup_right_bias_max_m": args.cup_right_bias_m,
+        },
         "instructions": DEFAULT_INSTRUCTIONS,
         "summary": {
-            "collection_attempts_this_run": args.episodes,
+            "collection_attempts_this_run": attempts_this_run,
             "successful_episodes_this_run": successful,
             "total_accepted_episodes": len(aggregate_episodes),
             "training_ready_episodes": sum(
@@ -1729,6 +1788,7 @@ def run_collection(args: argparse.Namespace) -> int:
                 ep_m["frame_count"] for ep_m in aggregate_episodes
             ),
         },
+        "target_training_ready": args.target_training_ready,
         "episodes": aggregate_episodes,
     }
     manifest_path = args.output_dir / "manifest.json"
@@ -1739,7 +1799,7 @@ def run_collection(args: argparse.Namespace) -> int:
 
     print(f"\n{'=' * 60}")
     print(
-        f"Done. {successful}/{args.episodes} episodes succeeded "
+        f"Done. {successful}/{attempts_this_run} attempts succeeded "
         f"({manifest['summary']['training_ready_episodes']} training-ready)."
     )
     print(f"Total frames: {manifest['summary']['total_frames']}")
