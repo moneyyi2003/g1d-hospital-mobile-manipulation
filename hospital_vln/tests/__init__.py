@@ -1,1 +1,0 @@
-"""Hospital VLN regression tests."""

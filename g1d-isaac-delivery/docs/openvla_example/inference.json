@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "artifact_type": "openvla_single_frame_action_inference",
+  "status": "succeeded",
+  "success": true,
+  "model": {
+    "path": "/root/autodl-tmp/checkpoints/openvla-7b",
+    "config_sha256": "edd5c5cf6d7927e07465cf086ebe41f7b3ec8f3b128a51f71d6db14dad7ad8b1",
+    "unnorm_key": "bridge_orig",
+    "dtype": "bfloat16",
+    "device": "cuda:0",
+    "attention": "sdpa",
+    "action_statistics": "checkpoint_config.norm_stats"
+  },
+  "observation": {
+    "image": "/root/autodl-tmp/outputs/family_home_vln/openvla/20260730T181932Z/head_rgb.png",
+    "image_sha256": "56800a92637c25b7712fc241d618bdedf89767cffde08dbb0b31cf6cd34630bf",
+    "instruction": "move the robot hand toward the houseplant",
+    "prompt": "In: What action should the robot take to move the robot hand toward the houseplant?\nOut:"
+  },
+  "action": [
+    0.0038173490201725453,
+    -0.0013954019739347845,
+    -0.010374429574345846,
+    0.003054090336257184,
+    -0.0014504625534310367,
+    0.04667543279774042,
+    0.996078431372549
+  ],
+  "action_semantics": [
+    "delta_x",
+    "delta_y",
+    "delta_z",
+    "delta_roll",
+    "delta_pitch",
+    "delta_yaw",
+    "gripper"
+  ],
+  "timing_sec": {
+    "model_load": 7.023731734603643,
+    "inference": 1.0286786332726479,
+    "total": 8.052410367876291
+  },
+  "execution": {
+    "performed": false,
+    "reason": "Inference sidecar never writes robot joints; the G1-D safety adapter decides whether execution is allowed."
+  }
+}

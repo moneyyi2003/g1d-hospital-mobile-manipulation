@@ -1,0 +1,26 @@
+# ── Core inference (required) ─────────────────────────────────────────────────
+torch>=2.4.0
+numpy>=1.26,<2.0
+Pillow>=10.0
+opencv-python>=4.8
+tqdm
+einops
+safetensors
+huggingface_hub
+modelscope
+scipy>=1.10
+
+# ── SAM3 (required for mask tracking) ─────────────────────────────────────────
+# SAM3 模型代码从 GitHub 获取，权重从魔搭社区 (ModelScope) 下载。
+# 详见 README 中的环境配置说明。
+
+# ── Semantic mapping (optional) ────────────────────────────────────────────────
+# transformers>=4.40         # for CLIPSeg
+# torch>=2.4.0               # already listed above
+
+# ── Visualization (optional) ───────────────────────────────────────────────────
+# viser>=0.2.23
+# trimesh
+# matplotlib
+# onnxruntime
+# requests

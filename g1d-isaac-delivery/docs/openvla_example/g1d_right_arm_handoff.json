@@ -1,0 +1,71 @@
+{
+  "schema_version": 1,
+  "source": "openvla",
+  "target": {
+    "robot": "g1_d",
+    "side": "right",
+    "arm_joint_count": 7,
+    "joint_order": [
+      "right_shoulder_pitch_joint",
+      "right_shoulder_roll_joint",
+      "right_shoulder_yaw_joint",
+      "right_elbow_joint",
+      "right_wrist_roll_joint",
+      "right_wrist_pitch_joint",
+      "right_wrist_yaw_joint"
+    ]
+  },
+  "model_action": {
+    "values": [
+      0.0038173490201725453,
+      -0.0013954019739347845,
+      -0.010374429574345846,
+      0.003054090336257184,
+      -0.0014504625534310367,
+      0.04667543279774042,
+      0.996078431372549
+    ],
+    "labels": [
+      "delta_x",
+      "delta_y",
+      "delta_z",
+      "delta_roll",
+      "delta_pitch",
+      "delta_yaw",
+      "gripper"
+    ],
+    "unnorm_key": "bridge_orig",
+    "semantics": "dataset-specific decoded end-effector delta (x,y,z,roll,pitch,yaw,gripper)"
+  },
+  "joint_command": null,
+  "execution_permitted": false,
+  "blocked_reasons": [
+    "checkpoint_not_finetuned_or_calibrated_for_g1_d",
+    "openvla_action_frame_not_mapped_to_g1_d_base_or_tool_frame",
+    "target_visibility_not_revalidated_in_final_openvla_frame",
+    "collision_checked_right_arm_ik_not_connected",
+    "g1_d_multifinger_hand_mapping_not_connected",
+    "reviewed_object_is_search_and_docking_only_not_manipulation_ready"
+  ],
+  "required_next_adapter": {
+    "input": "calibrated Cartesian delta in a declared camera/base/tool frame",
+    "output": "joint-limit and velocity-limited targets for right_shoulder_pitch_joint through right_wrist_yaw_joint",
+    "safety_gates": [
+      "base_stopped",
+      "fresh_rgb_and_tf",
+      "target_visible_and_not_edge_clipped_in_current_rgb",
+      "right_arm_ik_feasible",
+      "self_and_scene_collision_free",
+      "operator_enable_for_real_hardware"
+    ]
+  },
+  "application_id": "isaac-sim-654582",
+  "inference_artifact": "/root/autodl-tmp/outputs/family_home_vln/openvla/20260730T181932Z/inference.json",
+  "observation_image": "/root/autodl-tmp/outputs/family_home_vln/openvla/20260730T181932Z/head_rgb.png",
+  "instruction": "move the robot hand toward the houseplant",
+  "target_object": {
+    "object_id": "scan_houseplant_02",
+    "source_label": "houseplant",
+    "manipulation_ready": false
+  }
+}

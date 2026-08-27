@@ -107,11 +107,21 @@ RIGHT_ARM_JOINTS = (
     "right_wrist_roll_joint",     "right_wrist_pitch_joint",
     "right_wrist_yaw_joint",
 )
+LEFT_ARM_JOINTS = (
+    "left_shoulder_pitch_joint", "left_shoulder_roll_joint",
+    "left_shoulder_yaw_joint",   "left_elbow_joint",
+    "left_wrist_roll_joint",     "left_wrist_pitch_joint",
+    "left_wrist_yaw_joint",
+)
+LEFT_ARM_VERTICAL_RAD = np.array(
+    [0.0, 0.0, 0.0, math.pi / 2.0, 0.0, 0.0, 0.0],
+    dtype=np.float64,
+)
 RIGHT_HAND_OPEN_RAD = np.array(
-    [0.0, 0.0, 0.0, 0.08, 0.08, 0.08, 0.08], dtype=np.float64,
+    [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=np.float64,
 )
 RIGHT_HAND_CLOSED_RAD = np.array(
-    [0.65, 0.45, -1.25, 1.2, 1.35, 1.2, 1.35], dtype=np.float64,
+    [0.65, 0.25, -1.32, 1.34, 1.35, 0.75, 0.75], dtype=np.float64,
 )
 RIGHT_ARM_LIMITS_RAD = np.array([
     (-3.0892, 2.6704),  (-2.2515, 1.5882),  (-2.6180, 2.6180),
@@ -126,6 +136,36 @@ HIGH_REACH_RAD = np.array(
     [-0.80, -0.32, -0.30, 1.80, 0.0, -0.50, 0.0],
     dtype=np.float64,
 )
+
+# Calibrated Family Home physical-grasp corridor.  The contact-only probe
+# verified this local pose (with no transport joint): the cup is a few mm to
+# the right of the nominal centreline and has a small upright yaw.  Collection
+# jitters *around* this pose rather than sampling the edge of the arm's reach.
+PHYSICAL_CUP_FORWARD_M = 0.687
+PHYSICAL_CUP_RIGHT_M = 0.036
+PHYSICAL_CUP_YAW_DEG = -4.0
+# v13: restored the v8 baseline sampling distribution, measured from all 67
+# accepted episodes of physical_v8_pick100 (2026-08-17): offsets are uniform
+# +-5 mm in-plane and +-3 deg yaw around the audited nominal (fwd offset
+# min=-4.97mm max=+4.94mm; right -4.79..+4.75mm; yaw -2.94..+2.85deg).
+# The corridor added after v8 ([8,15] mm forward / yaw [-11,-6] deg) is
+# entirely outside that cluster -- no v8 accepted episode ever sampled it --
+# and v11/v12 running with it dropped acceptance ~6x (17% -> ~2.5%).
+# v14 (2026-08-20): user asked for a wider but still small object pose
+# variation for training diversity -- position jitter +-15 mm in-plane
+# ("only a little, not too much") and yaw +-15 deg around the same nominal
+# (yaw only, no roll/pitch, so the cup can never tip over).  Expect a lower
+# acceptance rate than v13's ~14% because the sampling box is ~9x the area
+# and the yaw band 5x wider than the v8 success cluster; keep --episodes
+# large enough that --target-training-ready still terminates early.
+PHYSICAL_SUCCESS_FORWARD_OFFSET_M = (-0.015, 0.015)
+PHYSICAL_SUCCESS_RIGHT_OFFSET_M = (-0.015, 0.015)
+PHYSICAL_SUCCESS_YAW_OFFSET_DEG = (-15.0, 15.0)
+# One previously verified physical-grasp pose for deterministic repeatability
+# testing.  The robot and high-reach arm seed are already fixed globally.
+FIXED_TEST_FORWARD_OFFSET_M = 0.012
+FIXED_TEST_RIGHT_OFFSET_M = 0.005
+FIXED_TEST_YAW_OFFSET_DEG = -0.15
 
 # Audited expert manipulation base pose from 20260810T015350Z dashboard run.
 # This is the post-APPROACH_AND_ALIGN arm-safe pose, NOT the VLA observation pose.
@@ -186,6 +226,12 @@ def parse_args() -> argparse.Namespace:
                    help="Root output directory")
     p.add_argument("--headless", action="store_true",
                    help="Run without the Isaac Sim GUI")
+    p.add_argument(
+        "--active-gpu",
+        type=int,
+        default=0,
+        help="Isaac/Vulkan GPU index visible inside the current runtime",
+    )
     p.add_argument("--seed", type=int, default=42,
                    help="Random seed for reproducibility")
     p.add_argument(
@@ -197,16 +243,34 @@ def parse_args() -> argparse.Namespace:
             "episode_NNNN directory without overwriting accepted data."
         ),
     )
-    p.add_argument("--base-variation-xy-m", type=float, default=0.05,
-                   help="Random XY jitter for robot base pose (m)")
-    p.add_argument("--base-variation-yaw-deg", type=float, default=5.0,
-                   help="Random yaw jitter for robot base pose (deg)")
-    p.add_argument("--cup-variation-xy-m", type=float, default=0.08,
-                   help="(Unused) legacy cup jitter; cup is now placed "
-                        "relative to the base in the right-arm reachable sector")
-    p.add_argument("--cup-right-bias-m", type=float, default=0.07,
-                   help="Extra rightward jitter for the cup relative to the "
-                        "base centreline (m), on top of the calibrated 0.031 m")
+    p.add_argument("--base-variation-xy-m", type=float, default=0.0,
+                   help="Deprecated: the training collector keeps the robot base fixed")
+    p.add_argument("--base-variation-yaw-deg", type=float, default=0.0,
+                   help="Deprecated: the training collector keeps the robot base fixed")
+    p.add_argument("--cup-variation-xy-m", type=float, default=0.005,
+                   help="Maximum small local XY offset of the upright cup (m)")
+    p.add_argument("--cup-variation-yaw-deg", type=float, default=3.0,
+                   help="Maximum rotation of the upright cup about world Z (deg)")
+    p.add_argument("--cup-right-bias-m", type=float, default=0.0,
+                   help="Deprecated compatibility option; no one-sided cup bias is used")
+    p.add_argument(
+        "--oft-manifest",
+        type=Path,
+        default=None,
+        help=(
+            "After collection, also write an OpenVLA-OFT-format manifest "
+            "(instruction + image + world-frame 7-DoF action samples) to this "
+            "path, reusing scripts/g1d_openvla_oft_data.build_manifest."
+        ),
+    )
+    p.add_argument(
+        "--fixed-condition",
+        action="store_true",
+        help=(
+            "Disable all cup randomization and repeat one verified upright "
+            "cup pose to measure physical-grasp repeatability."
+        ),
+    )
     return p.parse_args()
 
 
@@ -249,7 +313,18 @@ def _configure_joint_drives(robot) -> None:
         )
 
 
-def _upright_torso(robot) -> None:
+def _set_left_arm_vertical(robot, *, teleport: bool = False) -> None:
+    indices = robot.get_dof_indices(list(LEFT_ARM_JOINTS)).numpy().tolist()
+    if teleport:
+        positions = robot.get_dof_positions().numpy()[0].copy()
+        positions[indices] = LEFT_ARM_VERTICAL_RAD
+        robot.set_dof_positions(positions)
+    robot.set_dof_position_targets(LEFT_ARM_VERTICAL_RAD, dof_indices=indices)
+
+
+def _upright_torso(
+    robot, *, assisted_pose: tuple[float, float, float] | None = None
+) -> None:
     TORSO = ["LZ_mt_Joint", "LZ_it_Joint", "Yaw_Joint", "torso_Joint"]
     try:
         pos = robot.get_dof_positions().numpy()[0].copy()
@@ -265,6 +340,8 @@ def _upright_torso(robot) -> None:
 
     for _ in range(20):
         robot.apply_wheel_actions(np.zeros(2, dtype=np.float32))
+        if assisted_pose is not None:
+            set_assisted_robot_pose(robot, *assisted_pose)
         _app_utils.update_app()
 
 
@@ -278,6 +355,11 @@ def set_assisted_robot_pose(robot, x: float, y: float, yaw: float) -> None:
         positions=np.array([x, y, ACTIVE_ROBOT_ROOT_Z_M], dtype=np.float32),
         orientations=ori,
     )
+    robot.set_velocities(
+        linear_velocities=[0.0, 0.0, 0.0],
+        angular_velocities=[0.0, 0.0, 0.0],
+    )
+    _set_left_arm_vertical(robot)
 
 
 def robot_pose(robot):
@@ -499,6 +581,25 @@ def _setup_family_home_scene():
         collision_transform.AddScaleOp().Set(Gf.Vec3f(*(maximum - minimum)))
         UsdGeom.Imageable(collision.GetPrim()).MakeInvisible()
         UsdPhysics.CollisionAPI.Apply(collision.GetPrim())
+        if item.dynamic:
+            # v4 (regression fix): keep LOW Coulomb friction on the cup and
+            # hand colliders.  The working physical_verify_v8 configuration
+            # (67/400 accepted) had no friction material at all (PhysX
+            # default ≈ 0.5); the later 3.0/2.5 "ceramic grip" material made
+            # the middle phalanx stick to the box corner during the fold, so
+            # the finger could no longer slide up the cup wall and every
+            # attempt jammed at the open pose.
+            # v10: STOP authoring any material — restore the exact v8
+            # (physical_v8_pick100, 67/400) state where the cup and the
+            # hand colliders carry NO explicit PhysX material and rely on
+            # the USD/URDF import default.  The explicit μ=0.5 binding
+            # (v7-v9) statistically killed the grasp: v7+v9 = 0/26 vs the
+            # 17% v8 baseline (P(0/26 | 17%) ≈ 0.7%).  v9 telemetry showed
+            # the same release-gap signature as v8 accepted runs (72 mm in
+            # the 69-75 mm band) but the cup slipped at the micro-lift, so
+            # the binding's coefficient override — not the geometry — is
+            # the remaining physical differentiator.
+            pass
         if item.dynamic:
             rigid_body = UsdPhysics.RigidBodyAPI.Apply(root.GetPrim())
             rigid_body.CreateRigidBodyEnabledAttr(True)
@@ -852,16 +953,118 @@ def _randomize_cup_position(rng, variation_m: float = 0.08) -> np.ndarray:
     return np.array([cup_x, cup_y, root_z], dtype=np.float64)
 
 
-def _teleport_cup_to(cup_prim, x: float, y: float, z: float) -> None:
-    from pxr import Gf
+def _teleport_cup_to(
+    cup_prim, x: float, y: float, z: float, yaw_rad: float = 0.0
+) -> None:
+    """Reset the simulated cup to an upright, stationary world pose.
+
+    The preceding physical grasp may have left the PhysX rigid body moving.
+    Set it kinematic and clear velocity before the next attempt; the bridge
+    subsequently refreshes its pose through its Isaac ``XformPrim`` wrapper.
+    """
+    from pxr import Gf, UsdGeom, UsdPhysics
 
     attr = cup_prim.GetAttribute("xformOp:translate")
     if attr.IsValid():
         attr.Set(Gf.Vec3d(x, y, z))
+    orient_attr = cup_prim.GetAttribute("xformOp:orient")
+    if not orient_attr.IsValid():
+        orient_op = UsdGeom.Xformable(cup_prim).AddOrientOp(
+            UsdGeom.XformOp.PrecisionDouble
+        )
+        orient_attr = orient_op.GetAttr()
+    orient_attr.Set(
+        Gf.Quatd(
+            math.cos(yaw_rad / 2.0),
+            0.0,
+            0.0,
+            math.sin(yaw_rad / 2.0),
+        )
+    )
 
+    body = UsdPhysics.RigidBodyAPI(cup_prim)
+    if body:
+        body.GetKinematicEnabledAttr().Set(True)
+        body.CreateVelocityAttr().Set(Gf.Vec3f(0.0, 0.0, 0.0))
+        body.CreateAngularVelocityAttr().Set(Gf.Vec3f(0.0, 0.0, 0.0))
     import isaacsim.core.experimental.utils.app as _app_utils
 
-    _app_utils.update_app()
+    _app_utils.update_app(steps=10)
+
+
+def _configure_right_hand_physical_friction(stage) -> int:
+    """Bind finite Coulomb friction onto the right hand and the target cup.
+
+    v4 (regression fix): the working v8 configuration had no friction
+    material (PhysX default ≈ 0.5) and folded cleanly over the cup; the
+    later 3.0/2.5 material made the phalanx stick to the box corner and
+    jam every fold.  0.5 lets the fold slide but under-carries the
+    contact-only micro-lift: the curled middle phalanx presses a downward
+    component onto the far wall while the palm rises, so the cup slips
+    slowly out of the clamp and falls (v5/v6 0/10 — same failure).
+
+    v7: the earlier direct UsdPhysics.MaterialAPI.Apply loop only touched
+    prims that Stage.Traverse() returns with CollisionAPI — the imported
+    distal-finger collision meshes live inside instance prototypes and are
+    invisible to traversal, so the hand kept its import-default friction
+    and the µ change never reached the contact pair.  Bind a shared
+    physics-purpose UsdShade.Material to the editable right-hand xform
+    scope (USD inheritance carries it into the instance collision meshes —
+    the pattern used by run_g1d_simple_room_vln._configure_physical_
+    grasp_friction) and to the cup collider.
+
+    v9: coefficient back to 0.5 (v8 parity) — the v8 accepted lifts ran at
+    the default ≈0.5; the v5-v7 slips were the 12 N·m hook geometry, not
+    the friction level.  The binding is kept so the hand side is explicit
+    0.5 rather than the unverifiable URDF import default.
+    """
+    from pxr import UsdShade, UsdPhysics
+
+    material = UsdShade.Material.Define(
+        stage, "/World/PhysicsMaterials/FamilyHomePhysicalGrasp"
+    )
+    physics_material = UsdPhysics.MaterialAPI.Apply(material.GetPrim())
+    physics_material.CreateStaticFrictionAttr(0.5)
+    physics_material.CreateDynamicFrictionAttr(0.5)
+    physics_material.CreateRestitutionAttr(0.0)
+
+    palm_scope = ""
+    for prim in stage.Traverse():
+        if (
+            prim.GetName() == RIGHT_PALM_LINK
+            and prim.HasAPI(UsdPhysics.RigidBodyAPI)
+        ):
+            palm_scope = str(prim.GetPath())
+            break
+    if not palm_scope:
+        return 0
+
+    cup_prim = _find_cup_prim_in_stage()
+    object_prefix = str(cup_prim.GetPath()) + "/" if cup_prim else ""
+    bound: set[str] = set()
+    for prim in stage.Traverse():
+        path = str(prim.GetPath())
+        is_object_collider = (
+            bool(object_prefix)
+            and path.startswith(object_prefix)
+            and prim.HasAPI(UsdPhysics.CollisionAPI)
+        )
+        is_right_hand_scope = (
+            path.startswith(palm_scope)
+            and not prim.IsInstance()
+            and not prim.IsInstanceProxy()
+            and (
+                prim.HasAPI(UsdPhysics.CollisionAPI)
+                or prim.GetTypeName() == "Xform"
+            )
+        )
+        if not (is_object_collider or is_right_hand_scope):
+            continue
+        UsdShade.MaterialBindingAPI.Apply(prim).Bind(
+            material, materialPurpose="physics"
+        )
+        bound.add(path)
+    return len(bound)
 
 
 def _yaw_from_xyzw(quaternion_xyzw: np.ndarray) -> float:
@@ -931,7 +1134,9 @@ def _world_bbox_center(prim) -> np.ndarray:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
-def _set_arm_to_high_reach(robot) -> np.ndarray:
+def _set_arm_to_high_reach(
+    robot, *, assisted_pose: tuple[float, float, float] | None = None
+) -> np.ndarray:
     """Interpolate the right arm to HIGH_REACH_RAD (roll-first) to avoid
     the DLS-IK kinematic singularity at near-straight elbow.
 
@@ -964,6 +1169,8 @@ def _set_arm_to_high_reach(robot) -> np.ndarray:
         import isaacsim.core.experimental.utils.app as _app_utils
 
         for _ in range(2):
+            if assisted_pose is not None:
+                set_assisted_robot_pose(robot, *assisted_pose)
             _app_utils.update_app()
 
     final_arm = (
@@ -975,6 +1182,18 @@ def _set_arm_to_high_reach(robot) -> np.ndarray:
 # ═══════════════════════════════════════════════════════════════════════════════
 #  Main collection loop
 # ═══════════════════════════════════════════════════════════════════════════════
+
+
+def _meta_is_physical_training_ready(meta: dict[str, Any]) -> bool:
+    evidence = meta.get("expert_evidence") or {}
+    return bool(
+        meta.get("success")
+        and meta.get("ready_for_training")
+        and evidence.get("physical_hold_verified")
+        and not evidence.get("fixed_joint_created")
+        and not evidence.get("fixed_joint_configured")
+        and int(evidence.get("hold_contact_frames", 0)) >= 30
+    )
 
 
 def run_collection(args: argparse.Namespace) -> int:
@@ -1019,7 +1238,9 @@ def run_collection(args: argparse.Namespace) -> int:
     for meta_path in args.output_dir.glob("episode_*/meta.json"):
         try:
             meta = json.loads(meta_path.read_text(encoding="utf-8"))
-            existing_training_ready += int(bool(meta.get("ready_for_training")))
+            existing_training_ready += int(
+                _meta_is_physical_training_ready(meta)
+            )
         except (OSError, ValueError, json.JSONDecodeError):
             continue
     if (
@@ -1107,6 +1328,11 @@ def run_collection(args: argparse.Namespace) -> int:
     if not palm_prim_path:
         raise RuntimeError("cannot find the G1-D right-palm rigid body")
     print(f"  Palm: {palm_prim_path}")
+    # v10: friction binding disabled — v8 (67/400) ran with no explicit
+    # material; the μ=0.5 bindings (v7-v9) coincided with 0/26.  Restore
+    # v8 parity exactly.
+    # friction_colliders = _configure_right_hand_physical_friction(stage)
+    # print(f"  Physical-friction hand colliders: {friction_colliders}")
 
     # ── Collect episodes ─────────────────────────────────────────────────
     print(f"[5/5] Collecting {args.episodes} episodes …\n")
@@ -1124,19 +1350,14 @@ def run_collection(args: argparse.Namespace) -> int:
             break
         attempts_this_run += 1
         episode_id = start_index + run_offset
-        # ---- Randomize base pose -----------------------------------------
-        base_x = ACTIVE_BASE_POSE[0] + rng.uniform(
-            -args.base_variation_xy_m, args.base_variation_xy_m
-        )
-        base_y = ACTIVE_BASE_POSE[1] + rng.uniform(
-            -args.base_variation_xy_m, args.base_variation_xy_m
-        )
-        base_yaw = ACTIVE_BASE_POSE[2] + math.radians(
-            rng.uniform(-args.base_variation_yaw_deg, args.base_variation_yaw_deg)
-        )
+        # Keep the robot at the reviewed manipulation pose in every episode.
+        # Only the upright cup is randomized, so variation does not move the
+        # target outside the physical right-hand workspace.
+        base_x, base_y, base_yaw = ACTIVE_BASE_POSE
 
         # Teleport robot
         set_assisted_robot_pose(robot, base_x, base_y, base_yaw)
+        _set_left_arm_vertical(robot, teleport=True)
         _upright_torso(robot)
         robot.apply_wheel_actions(np.zeros(2, dtype=np.float32))
         for _ in range(30):
@@ -1154,8 +1375,25 @@ def run_collection(args: argparse.Namespace) -> int:
         # never make contact.  Sample the calibrated local offset with
         # jitter, then clamp onto the dining-table patch so the cup never
         # leaves the tabletop (table top spans x∈[1.375,2.725], y∈[2.64,3.46]).
-        fwd_m = 0.675 + rng.uniform(-0.03, 0.03)
-        right_m = 0.031 + rng.uniform(0.0, args.cup_right_bias_m)
+        if args.fixed_condition:
+            cup_local_forward_offset_m = FIXED_TEST_FORWARD_OFFSET_M
+            cup_local_right_offset_m = FIXED_TEST_RIGHT_OFFSET_M
+            cup_yaw_offset_deg = FIXED_TEST_YAW_OFFSET_DEG
+        else:
+            # Sample only the measured physical-grasp corridor.  These are
+            # still independently randomized every episode, but avoid poses
+            # where the cup handle makes a two-finger contact unable to
+            # sustain a lift.
+            cup_local_forward_offset_m = rng.uniform(
+                *PHYSICAL_SUCCESS_FORWARD_OFFSET_M
+            )
+            cup_local_right_offset_m = rng.uniform(
+                *PHYSICAL_SUCCESS_RIGHT_OFFSET_M
+            )
+            cup_yaw_offset_deg = rng.uniform(*PHYSICAL_SUCCESS_YAW_OFFSET_DEG)
+        cup_yaw_rad = math.radians(PHYSICAL_CUP_YAW_DEG + cup_yaw_offset_deg)
+        fwd_m = PHYSICAL_CUP_FORWARD_M + cup_local_forward_offset_m
+        right_m = PHYSICAL_CUP_RIGHT_M + cup_local_right_offset_m
         f = (math.cos(base_yaw), math.sin(base_yaw))
         r = (math.sin(base_yaw), -math.cos(base_yaw))
         if args.scene_profile == "living-room":
@@ -1171,7 +1409,7 @@ def run_collection(args: argparse.Namespace) -> int:
                 - HOUSEHOLD_OBJECTS[4].minimum_xyz[1]
             )
         if args.scene_profile != "living-room":
-            _teleport_cup_to(cup_prim, cup_x, cup_y, cup_z)
+            _teleport_cup_to(cup_prim, cup_x, cup_y, cup_z, cup_yaw_rad)
         # ---- Pre-position arm to high-reach pose -------------------------
         final_arm = _set_arm_to_high_reach(robot)
         palm_now = link_world_position(robot, RIGHT_PALM_LINK)
@@ -1368,14 +1606,25 @@ def run_collection(args: argparse.Namespace) -> int:
                 orientation_now, demo["orientation"]
             )
 
-            # Gripper: ratio of distance to OPEN vs CLOSED hand pose
-            hand_q = (
-                robot.get_dof_positions()
+            # Gripper action is the expert's commanded absolute open fraction,
+            # not the realised finger position after contact.  During a real
+            # pinch the cup prevents the joints from reaching the nominal
+            # CLOSED pose; labelling that contact-limited state as the command
+            # made training and execution disagree (the executor interpreted
+            # e.g. 0.4 as a partially-open target instead of a fully-closed
+            # command).  Read the articulation targets that the expert issued
+            # so the recorded contract remains exactly 1=open, 0=closed.
+            hand_target_q = (
+                robot.get_dof_position_targets()
                 .numpy()[0, demo["hand_indices"]]
                 .astype(np.float64)
             )
-            open_d = float(np.linalg.norm(hand_q - RIGHT_HAND_OPEN_RAD))
-            closed_d = float(np.linalg.norm(hand_q - RIGHT_HAND_CLOSED_RAD))
+            open_d = float(
+                np.linalg.norm(hand_target_q - RIGHT_HAND_OPEN_RAD)
+            )
+            closed_d = float(
+                np.linalg.norm(hand_target_q - RIGHT_HAND_CLOSED_RAD)
+            )
             gripper = closed_d / max(open_d + closed_d, 1e-9)
 
             # Flag out-of-bounds actions
@@ -1403,6 +1652,7 @@ def run_collection(args: argparse.Namespace) -> int:
                 "dpitch_rad": float(rotation[1]),
                 "dyaw_rad": float(rotation[2]),
                 "gripper": float(np.clip(gripper, 0.0, 1.0)),
+                "gripper_label_source": "commanded_dof_position_target",
                 "labels": [
                     "dx_m", "dy_m", "dz_m",
                     "droll_rad", "dpitch_rad", "dyaw_rad",
@@ -1435,12 +1685,17 @@ def run_collection(args: argparse.Namespace) -> int:
         for i, name in enumerate(RIGHT_ARM_JOINTS):
             pregrasp_init[name] = float(final_arm[i])
 
-        # Zero all left-arm joints so the left arm hangs straight down
-        left_arm_down: dict[str, float] = {}
+        # Keep the unused left arm out of the workspace.  In this asset the
+        # zero elbow points the forearm horizontally; +pi/2 makes upper arm
+        # and forearm both vertical while the left hand stays relaxed/open.
         for name in all_dof_names:
             if name.startswith("left_"):
                 pregrasp_init[name] = 0.0
-                left_arm_down[name] = 0.0
+        left_arm_down = {
+            name: float(LEFT_ARM_VERTICAL_RAD[index])
+            for index, name in enumerate(LEFT_ARM_JOINTS)
+        }
+        pregrasp_init.update(left_arm_down)
 
         config_overrides: dict[str, Any] = {
             # 30 Hz still gives PhysX two settling ticks for every DLS command
@@ -1470,6 +1725,16 @@ def run_collection(args: argparse.Namespace) -> int:
                     # The contact-calibrated aperture prevents over-closing;
                     # use enough drive effort to keep the 0.12 kg cup from
                     # opening the thumb/middle pair during vertical lift.
+                    # v9: restore the v8 reference value 4.0 N·m.  At 12 N·m
+                    # the middle phalanx drives DEEPER into the far wall and
+                    # rides over the rim — final middle_0 flex 0.59 rad with
+                    # the pad contact 12 mm BELOW the thumb's, a hook shape
+                    # whose downward component ejects the cup at the micro-
+                    # lift (v5-v7: 0/16, cup slips out after 5-7 mm).  At
+                    # 4.0 the wall stops the phalanx earlier (middle_0 0.31,
+                    # pads level at ~0.070) — a flat two-sided pinch that
+                    # friction-carries the cup (v8 accepted episodes lift
+                    # 40-185 mm at default μ ≈ 0.5).
                     "maximum_effort": 4.0,
                 },
             },
@@ -1477,6 +1742,33 @@ def run_collection(args: argparse.Namespace) -> int:
                 # Enter slightly above the cup centre so the open palm clears
                 # the physical cylinder while both fingertips descend along
                 # its sidewall.  Reference cup-task value.
+                # --- v2 diagnosis (physical_verify_v2, 0/60 accepted) ---
+                # The cup's collision box sits on the table and is 111 mm
+                # tall (top at world z ≈ 0.134), while the pad reachability
+                # floor of this G1-D wrist at the calibrated base pose is
+                # ≈ 0.05–0.06 m.  Grasping at centre + 30 mm put the pads at
+                # 0.062 m: (a) only marginally above the reachability floor,
+                # so the wrist either stalled 2–6 cm short (v2 dominant
+                # failure) or landed on the box face where the fold arc is
+                # blocked and the phalanx jams against the immovable 79 mm
+                # box (v1 dominant failure); (b) the fingers could never fold
+                # over the cup because the fold sweeps through the box volume
+                # between pad level and the 111 mm rim.
+                # v4: the friction regression (3.0/2.5 materials, see
+                # _configure_right_hand_physical_friction) was the actual
+                # fold blocker — with low friction the phalanx slides up the
+                # cup wall and folds over the rim even from 30 mm above the
+                # centre (v8 evidence).  Raising the target to 50 mm was
+                # WRONG for a different reason: the pinch line lands within
+                # ~3 mm of the 111 mm cup's top face, so the thumb closes
+                # ABOVE the wall (thumb inner surface z > box top in 7/8 v4
+                # episodes) and clamps the middle phalanx instead of the cup
+                # — contact senses finger-on-finger, the cup never follows
+                # the micro-lift (drift 25–41 mm, lift ≈ 0).
+                # v5: restore the v8 reference offset 30 mm — pinch ~24 mm
+                # below the rim, thumb on the near wall, middle wrapped over
+                # the far wall (v8 accepted pinch z = 0.061; v1's single
+                # accepted episode grasped even lower, z = 0.030).
                 "grasp_point_z_offset_m": 0.03,
                 # This G1-D wrist cannot reach the former 70 mm high staging
                 # plane from the calibrated base pose: it stalls 9–10 cm
@@ -1505,12 +1797,9 @@ def run_collection(args: argparse.Namespace) -> int:
                 #    surface-centring servo only 3 steps to correct the
                 #    lateral landing (default 0.7 gives it the last 30% of
                 #    closure at the default 2x gain);
-                #  * use_fixed_joint_attach False bet the whole lift on
-                #    untested friction clamping.
-                # Restore the known-good reference path: fraction-based
-                # dynamics release at 0.8 closed, centring servo active from
-                # 0.7 closed, and a transport FixedJoint once the contact
-                # gate has confirmed the two-sided clamp.
+                # The object must be carried solely by finger collision and
+                # friction.  No FixedJoint or other transport attachment is
+                # allowed in training demonstrations.
                 "grasp_preclose_settle_steps": 8,
                 "close_steps": 40,
                 "close_ramp_steps": 30,
@@ -1521,15 +1810,28 @@ def run_collection(args: argparse.Namespace) -> int:
                 # 3–5 cm from that proxy while both pads still contact the
                 # 64 mm cup, so do not reject a valid two-sided contact on
                 # this modelling approximation alone.
-                "grasp_attach_max_error_m": 0.06,
-                "grasp_max_object_drift_m": 0.025,
+                "grasp_attach_max_error_m": 0.025,
+                # Once both pads touch, keep the already calibrated grasp
+                # target fixed.  The previous 2x centre-servo repeatedly
+                # chased a pad-centre proxy that is naturally ~3--4 cm away
+                # from the cup centre on this hand, pushing the cup sideways
+                # before the close phase could establish a force closure.
+                "grasp_max_object_drift_m": 0.012,
+                # A cup is not safe to close on with the generic 2.5 cm
+                # Cartesian tolerance used for transit motions.
+                "grasp_entry_position_tolerance_m": 0.015,
                 "close_cartesian_servo_until_fraction": 0.7,
-                "contact_surface_center_servo": True,
-                "contact_surface_center_gain": 2.0,
-                "contact_surface_center_max_correction_m": 0.02,
+                "contact_surface_center_servo": False,
+                "contact_surface_center_gain": 0.0,
+                "contact_surface_center_max_correction_m": 0.0,
                 "contact_target_lead_limit_rad": 0.12,
-                "release_kinematic_at_close_fraction": 0.8,
-                "use_fixed_joint_attach": True,
+                # Do not release the cup to dynamics until the hand has
+                # reached a firm 95%-closed pinch.  At 80% the contact gate
+                # could pass while the cup still rested on the table, then
+                # fall out as soon as lifting started.  This remains a pure
+                # collision/friction grasp: no fixed joint is ever created.
+                "release_kinematic_at_close_fraction": 0.95,
+                "use_fixed_joint_attach": False,
                 # The pinch line stays near-horizontal (measured 0.03–0.07)
                 # while the orientation lock is held through the preclose.
                 # Keep modest headroom over the reference 0.10; the 0.44
@@ -1541,15 +1843,27 @@ def run_collection(args: argparse.Namespace) -> int:
                 # sensors, lift height, and hold-stability gates remain
                 # mandatory.
                 "line_alignment_tolerance_rad": 0.40,
-                # -- lift: reference timing; the transport joint carries the
-                # cup while the recorded arm trajectory stays the same.
+                # Slow the loaded lift enough for the physical finger clamp
+                # to retain the cup without an artificial attachment.
                 "lift_target_lead_limit_rad": 0.12,
                 # A loaded arm needs longer than 0.4 seconds to clear the
                 # tabletop.  Keep bounded DLS control but allow a useful
                 # lift and physical verification window.
-                "lift_max_position_step_m": 0.025,
-                "grasp_verify_after_steps": 40,
-                "phase_max_steps": {"horizontal": 360, "lift": 240},
+                "lift_max_position_step_m": 0.004,
+                # Prove a force-closure grasp before committing to the full
+                # lift.  This is a physical test: both pads must remain in
+                # contact while the cup follows a 2.5 cm micro-lift.
+                "grasp_verify_lift_m": 0.025,
+                "grasp_verify_min_lift_m": 0.015,
+                "grasp_verify_max_position_step_m": 0.002,
+                "grasp_verify_max_relative_drift_m": 0.012,
+                "grasp_verify_stable_steps": 8,
+                "grasp_verify_max_steps": 90,
+                # Contact-only lifts can begin more slowly than a transport
+                # joint.  Do not reject a real 2 cm initial lift before the
+                # fingers have had time to carry the cup through 10 cm.
+                "grasp_verify_after_steps": 150,
+                "phase_max_steps": {"horizontal": 360, "lift": 360},
                 # This dataset is for the VLA ``pick`` skill, not for a
                 # pick-and-drop benchmark.  Keep the cup after the verified
                 # lift so the quality gate can measure a real 30-frame hold
@@ -1596,15 +1910,54 @@ def run_collection(args: argparse.Namespace) -> int:
         expert_succeeded = bool(evidence.get("success"))
         lift_height_m = float(evidence.get("lift_height_m", 0.0))
         stable_hold = int(evidence.get("stable_hold_frames", 0))
+        physical_hold_verified = bool(
+            evidence.get("physical_hold_verified", False)
+        )
+        fixed_joint_created = bool(evidence.get("fixed_joint_created", False))
         frame_count = int(demo["frame"])
+        left_indices = robot.get_dof_indices(list(LEFT_ARM_JOINTS)).numpy().tolist()
+        left_actual_rad = (
+            robot.get_dof_positions().numpy()[0, left_indices].astype(np.float64)
+        )
+        left_max_joint_error_rad = float(
+            np.max(np.abs(left_actual_rad - LEFT_ARM_VERTICAL_RAD))
+        )
+        left_shoulder_world = link_world_position(
+            robot, "left_shoulder_pitch_link"
+        )
+        left_elbow_world = link_world_position(robot, "left_elbow_link")
+        left_wrist_world = link_world_position(robot, "left_wrist_roll_link")
+
+        def _down_angle_deg(start: np.ndarray, end: np.ndarray) -> float:
+            segment = np.asarray(end - start, dtype=np.float64)
+            length = float(np.linalg.norm(segment))
+            if length <= 1e-9:
+                return 180.0
+            cosine = float(np.clip(-segment[2] / length, -1.0, 1.0))
+            return math.degrees(math.acos(cosine))
+
+        left_upper_down_angle_deg = _down_angle_deg(
+            left_shoulder_world, left_elbow_world
+        )
+        left_forearm_down_angle_deg = _down_angle_deg(
+            left_elbow_world, left_wrist_world
+        )
+        left_arm_vertical_verified = (
+            left_max_joint_error_rad <= 0.15
+            and left_upper_down_angle_deg <= 25.0
+            and left_forearm_down_angle_deg <= 25.0
+        )
 
         accepted = (
             expert_succeeded
+            and physical_hold_verified
+            and not fixed_joint_created
             and frame_count >= 8
             and lift_height_m >= 0.10
             and stable_hold >= 30
             and demo["invalid_images"] == 0
             and demo["invalid_action_count"] == 0
+            and left_arm_vertical_verified
         )
 
         if accepted:
@@ -1620,6 +1973,10 @@ def run_collection(args: argparse.Namespace) -> int:
                 reason_parts.append(
                     f"expert_failed: {evidence.get('reason', 'unknown')}"
                 )
+            if not physical_hold_verified:
+                reason_parts.append("physical hold was not verified")
+            if fixed_joint_created:
+                reason_parts.append("forbidden fixed grasp joint was created")
             if frame_count < 8:
                 reason_parts.append(f"only {frame_count} frames")
             if lift_height_m < 0.10:
@@ -1631,6 +1988,13 @@ def run_collection(args: argparse.Namespace) -> int:
             if demo["invalid_action_count"] > 0:
                 reason_parts.append(
                     f"{demo['invalid_action_count']} invalid actions"
+                )
+            if not left_arm_vertical_verified:
+                reason_parts.append(
+                    "left arm not vertical: "
+                    f"upper={left_upper_down_angle_deg:.1f}deg "
+                    f"forearm={left_forearm_down_angle_deg:.1f}deg "
+                    f"joint_error={left_max_joint_error_rad:.3f}rad"
                 )
             reason = "; ".join(reason_parts) if reason_parts else "unknown"
             print(f"✗ ({reason})")
@@ -1654,13 +2018,34 @@ def run_collection(args: argparse.Namespace) -> int:
                 else "dining_cup"
             ),
             "base_pose": {"x": base_x, "y": base_y, "yaw": base_yaw},
+            "unused_left_arm_pose": {
+                "joint_order": list(LEFT_ARM_JOINTS),
+                "target_rad": LEFT_ARM_VERTICAL_RAD.tolist(),
+                "actual_rad": left_actual_rad.tolist(),
+                "maximum_joint_error_rad": left_max_joint_error_rad,
+                "upper_arm_down_angle_deg": left_upper_down_angle_deg,
+                "forearm_down_angle_deg": left_forearm_down_angle_deg,
+                "vertical_verified": left_arm_vertical_verified,
+            },
             "cup_root_world_m": cup_pos.tolist(),
             "cup_grasp_target_world_m": target_world.tolist(),
             "randomization": {
-                "base_variation_xy_m": args.base_variation_xy_m,
-                "base_variation_yaw_deg": args.base_variation_yaw_deg,
-                "cup_forward_jitter_m": 0.03,
-                "cup_right_bias_max_m": args.cup_right_bias_m,
+                "robot_base_fixed": True,
+                "base_variation_xy_m": 0.0,
+                "base_variation_yaw_deg": 0.0,
+                "cup_local_forward_offset_m": cup_local_forward_offset_m,
+                "cup_local_right_offset_m": cup_local_right_offset_m,
+                "cup_yaw_rad": cup_yaw_rad,
+                "cup_nominal_yaw_deg": PHYSICAL_CUP_YAW_DEG,
+                "cup_yaw_offset_deg": cup_yaw_offset_deg,
+                "sampling_corridor": {
+                    "forward_offset_m": list(PHYSICAL_SUCCESS_FORWARD_OFFSET_M),
+                    "right_offset_m": list(PHYSICAL_SUCCESS_RIGHT_OFFSET_M),
+                    "yaw_offset_deg": list(PHYSICAL_SUCCESS_YAW_OFFSET_DEG),
+                },
+                "fixed_condition": bool(args.fixed_condition),
+                "cup_roll_rad": 0.0,
+                "cup_pitch_rad": 0.0,
             },
             "success": expert_succeeded,
             "ready_for_training": accepted,
@@ -1678,6 +2063,20 @@ def run_collection(args: argparse.Namespace) -> int:
                 ),
                 "lift_height_m": float(lift_height_m),
                 "stable_hold_frames": int(stable_hold),
+                "hold_contact_frames": int(
+                    evidence.get("hold_contact_frames", 0)
+                ),
+                "hold_max_palm_object_drift_m": float(
+                    evidence.get("hold_max_palm_object_drift_m", 0.0)
+                ),
+                "hold_min_lift_height_m": float(
+                    evidence.get("hold_min_lift_height_m", 0.0)
+                ),
+                "physical_hold_verified": physical_hold_verified,
+                "fixed_joint_created": fixed_joint_created,
+                "fixed_joint_configured": bool(
+                    evidence.get("fixed_joint_configured", False)
+                ),
                 "state": evidence.get("state"),
                 "steps": evidence.get("steps"),
                 "grasp_mechanism": evidence.get("grasp_mechanism"),
@@ -1687,6 +2086,8 @@ def run_collection(args: argparse.Namespace) -> int:
                 "table_top_prim_path": evidence.get("table_top_prim_path"),
             },
             "task_contract": f"{args.scene_profile}_pick_lift_hold_head_ego",
+            "gripper_convention": "1=open,0=closed",
+            "gripper_label_source": "commanded_dof_position_target",
             "camera_mode": "ego_centric_head",
             "camera_mount": {
                 "prim_path": "/World/Sensors/G1DHeadCamera",
@@ -1732,15 +2133,22 @@ def run_collection(args: argparse.Namespace) -> int:
     aggregate_episodes: list[dict[str, Any]] = []
     for episode_path in sorted(args.output_dir.glob("episode_*/meta.json")):
         try:
-            aggregate_episodes.append(
-                json.loads(episode_path.read_text(encoding="utf-8"))
+            episode_meta = json.loads(
+                episode_path.read_text(encoding="utf-8")
             )
+            if _meta_is_physical_training_ready(episode_meta):
+                aggregate_episodes.append(episode_meta)
         except (OSError, json.JSONDecodeError):
             continue
     manifest = {
         "schema_version": 1,
         "task": f"{args.scene_profile}_cup_grasping_head_ego",
         "robot": "g1_d_wheeled",
+        "unused_left_arm_pose": {
+            "joint_order": list(LEFT_ARM_JOINTS),
+            "target_rad": LEFT_ARM_VERTICAL_RAD.tolist(),
+            "contract": "upper_arm_and_forearm_vertical_to_ground",
+        },
         "action_space": {
             "type": "continuous_7d_delta",
             "labels": [
@@ -1750,6 +2158,8 @@ def run_collection(args: argparse.Namespace) -> int:
             ],
             "unnorm_key": f"g1d_{args.scene_profile.replace('-', '_')}_cup_head",
             "frame": "world",
+            "gripper_convention": "1=open,0=closed",
+            "gripper_label_source": "commanded_dof_position_target",
         },
         "observation_space": {
             "type": "rgb",
@@ -1771,10 +2181,14 @@ def run_collection(args: argparse.Namespace) -> int:
         "expert_source": "machuanhao_dls_ik",
         "capture_hz": 10,
         "randomization": {
-            "base_variation_xy_m": args.base_variation_xy_m,
-            "base_variation_yaw_deg": args.base_variation_yaw_deg,
-            "cup_forward_jitter_m": 0.03,
-            "cup_right_bias_max_m": args.cup_right_bias_m,
+            "robot_base_fixed": True,
+            "base_variation_xy_m": 0.0,
+            "base_variation_yaw_deg": 0.0,
+            "cup_variation_xy_m": args.cup_variation_xy_m,
+            "cup_variation_yaw_deg": args.cup_variation_yaw_deg,
+            "cup_nominal_yaw_deg": PHYSICAL_CUP_YAW_DEG,
+            "cup_roll_rad": 0.0,
+            "cup_pitch_rad": 0.0,
         },
         "instructions": DEFAULT_INSTRUCTIONS,
         "summary": {
@@ -1782,7 +2196,8 @@ def run_collection(args: argparse.Namespace) -> int:
             "successful_episodes_this_run": successful,
             "total_accepted_episodes": len(aggregate_episodes),
             "training_ready_episodes": sum(
-                1 for ep_m in aggregate_episodes if ep_m.get("ready_for_training")
+                1 for ep_m in aggregate_episodes
+                if _meta_is_physical_training_ready(ep_m)
             ),
             "total_frames": sum(
                 ep_m["frame_count"] for ep_m in aggregate_episodes
@@ -1796,6 +2211,26 @@ def run_collection(args: argparse.Namespace) -> int:
         json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )
+
+    if args.oft_manifest is not None:
+        # OpenVLA-OFT-format manifest: reuses g1d_openvla_oft_data's strict
+        # audit (expert evidence, camera intrinsics, action frame/unnorm key)
+        # so anything that would fail downstream OFT loading is caught here.
+        import sys
+
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from g1d_openvla_oft_data import build_manifest as _build_oft_manifest
+
+        try:
+            oft_payload = _build_oft_manifest(args.output_dir, args.oft_manifest)
+            print(
+                f"OFT manifest: {args.oft_manifest.resolve()} "
+                f"({oft_payload['episode_count']} episodes, "
+                f"{oft_payload['sample_count']} action-chunk samples)"
+            )
+        except (RuntimeError, OSError, ValueError) as exc:
+            print(f"OFT manifest generation FAILED: {exc}")
+            return 2
 
     print(f"\n{'=' * 60}")
     print(
@@ -1822,7 +2257,7 @@ if __name__ == "__main__":
         "headless": args.headless,
         "width": 1920,
         "height": 1080,
-        "active_gpu": 0,
+        "active_gpu": args.active_gpu,
         "multi_gpu": False,
     })
 

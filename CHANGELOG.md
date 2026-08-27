@@ -3,6 +3,42 @@
 本文件记录能够影响复现、行为、接口或任务状态的重要变更。日期使用 UTC；生成物刷新和
 无行为影响的小改动不单独记录。
 
+## 2026-08-14
+
+### OpenVLA-OFT 微调前置合同与只读预检
+
+- 将 G1-D OFT 训练入口的默认数据源统一为最新第一视角成功轨迹
+  `outputs/family_home_vln/expert_demos_head`，不再误用旧的 integrated 目录。
+- 冻结训练合同：`640x480` 头部 RGB、10 Hz、world-frame 7D 增量、
+  `1=open/0=closed`、`g1d_family_home_cup_head` unnorm key；第三人称图只用于人工审计。
+- 新增不启动训练的 preflight，检查隔离环境、OpenVLA-OFT 源码、本地三分片权重、
+  物理成功/RGB/动作门并生成正式 manifest 和 readiness 报告。
+- 最新轨迹通过数据审计和 OFT loader smoke；追加采集 5 次尝试得到 3 条新合格轨迹，
+  合计 4 条、181 帧、153 个 8-step 样本，张量为 `pixels=(1,6,224,224)`、
+  `actions=(1,8,7)`。采集器改为自动续号且拒绝覆盖已有 episode；软件就绪，但未达到
+  100 条成功轨迹和
+  4000 个 action-chunk 的项目正式训练门，因此没有启动微调。
+- 将新数采相机近截断面从 USD 默认 `1.0 m` 显式改为 `0.1 m`，远截断面保持
+  `1,000,000 m`；每条轨迹现写入完整 pinhole 内参和 clipping 元数据。新参数独立采集
+  5 次，2 条通过，得到 97 帧和 83 个 8-step 样本，OFT loader smoke 通过；旧相机域
+  数据未被覆盖或混入。
+
+## 2026-08-11
+
+### G1-D Family Home OpenVLA-OFT 训练链路
+
+- 新增 `scripts/g1d_openvla_oft_data.py`，对家庭场景 Expert 轨迹重新执行物理成功、
+  10 cm 抬升、30 帧稳定保持、RGB 黑框、7D 动作范围门，并生成不复制原图的 OFT
+  manifest、Q01/Q99 统计和 8 步 action chunk。
+- 新增 `scripts/train_openvla_oft_g1d.py` 与启动脚本，复用上游 OFT 连续 L1 action
+  head、LoRA、单 RGB 和 7D/8-step 合同；关闭未采集的 proprio，启用 activation
+  checkpointing 与 DDP static graph 以适配 24 GB RTX 4090。
+- 修正隔离的 `.conda/envs/openvla-oft` 中 LIBERO 引入的依赖漂移；`pip check` 通过，
+  未修改 pyomnits。处理器 smoke 得到 `pixels=(1,6,224,224)`、`actions=(1,8,7)`。
+- GPU 1 完成 1-step 反向传播并保存 LoRA adapter、L1 action head 和数据统计。现有 8
+  条历史轨迹经新门仅 1 条（61 帧、54 个 action chunk）合格，故未启动正式长训；需
+  先重新采集足量无黑框、无动作跳变的成功轨迹。
+
 ## 2026-08-04
 
 ### SimpleRoom 同会话网页命令与 Isaac 桌面

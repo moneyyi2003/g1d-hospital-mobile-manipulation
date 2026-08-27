@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "name": "g1d-family-home-dual-brain-pipeline",
+  "runtime": "isaac_sim",
+  "web_port": 6012,
+  "intent": {
+    "provider": "deepseek",
+    "strict_no_rule_fallback": true,
+    "catalog_constrained": true
+  },
+  "dual_brain": {
+    "orchestrator": "g1d_dual_brain_agent.DualBrainExecutive",
+    "vln_skills": [
+      "navigate",
+      "search_object",
+      "approach_and_align",
+      "return"
+    ],
+    "vla_skills": [
+      "manipulate",
+      "verify"
+    ],
+    "shared_memory": "outputs/family_home_vln/dual_agent_world_memory.json"
+  },
+  "web_features": [
+    "zip_map_import",
+    "pointcloud_layer",
+    "occupancy_layer",
+    "semantic_layer",
+    "region_layer",
+    "natural_language_command",
+    "overview_camera",
+    "robot_camera",
+    "live_pose_and_path",
+    "velocity_telemetry",
+    "task_logs"
+  ],
+  "manipulation": {
+    "status": "adapter_present_real_robot_deferred",
+    "future_backend": "teleoperation_or_openvla_oft"
+  }
+}

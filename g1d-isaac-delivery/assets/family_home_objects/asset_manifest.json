@@ -1,0 +1,273 @@
+{
+  "schema_version": 1,
+  "asset_set": "replica_cad_household_clutter_v1",
+  "asset_set_signature": "0e9e9eeb7198711a9d3280ece03325710e75cb2975d2bee5d5f4e982ea37c148",
+  "perception_labels_supplied_to_robot": false,
+  "license_note": "ReplicaCAD local dataset; see its bundled README and LICENSE",
+  "objects": [
+    {
+      "object_id": "living_plant",
+      "source_name": "frl_apartment_indoor_plant_01.glb",
+      "evaluation_label": "indoor plant",
+      "position_xy": [
+        -2.95,
+        1.15
+      ],
+      "support_height_above_floor_m": 0.0,
+      "yaw_deg": 20.0,
+      "mass_kg": 4.0,
+      "minimum_xyz": [
+        -0.256806,
+        -0.509234,
+        -0.243841
+      ],
+      "maximum_xyz": [
+        0.260499,
+        0.981388,
+        0.246645
+      ],
+      "source_path": "/root/autodl-tmp/lingbot_semantic_nav/data/habitat_assets/versioned_data/replica_cad_dataset/objects/frl_apartment_indoor_plant_01.glb",
+      "prepared_usd": "/root/autodl-tmp/outputs/family_home_assets/living_plant/living_plant.usd"
+    },
+    {
+      "object_id": "bedside_lamp",
+      "source_name": "frl_apartment_lamp_01.glb",
+      "evaluation_label": "lamp",
+      "position_xy": [
+        -2.48,
+        -2.18
+      ],
+      "support_height_above_floor_m": 0.55,
+      "yaw_deg": -15.0,
+      "mass_kg": 2.0,
+      "minimum_xyz": [
+        -0.226088,
+        -0.344187,
+        -0.211905
+      ],
+      "maximum_xyz": [
+        0.229833,
+        0.277855,
+        0.214345
+      ],
+      "source_path": "/root/autodl-tmp/lingbot_semantic_nav/data/habitat_assets/versioned_data/replica_cad_dataset/objects/frl_apartment_lamp_01.glb",
+      "prepared_usd": "/root/autodl-tmp/outputs/family_home_assets/bedside_lamp/bedside_lamp.usd"
+    },
+    {
+      "object_id": "media_monitor",
+      "source_name": "frl_apartment_monitor.glb",
+      "evaluation_label": "monitor",
+      "position_xy": [
+        -0.2,
+        3.78
+      ],
+      "support_height_above_floor_m": 0.82,
+      "yaw_deg": 0.0,
+      "mass_kg": 3.5,
+      "minimum_xyz": [
+        -0.346054,
+        -0.442339,
+        -0.068302
+      ],
+      "maximum_xyz": [
+        0.345627,
+        0.21415,
+        0.105224
+      ],
+      "source_path": "/root/autodl-tmp/lingbot_semantic_nav/data/habitat_assets/versioned_data/replica_cad_dataset/objects/frl_apartment_monitor.glb",
+      "prepared_usd": "/root/autodl-tmp/outputs/family_home_assets/media_monitor/media_monitor.usd"
+    },
+    {
+      "object_id": "dining_basket",
+      "source_name": "frl_apartment_basket.glb",
+      "evaluation_label": "basket",
+      "position_xy": [
+        2.8,
+        3.65
+      ],
+      "support_height_above_floor_m": 0.0,
+      "yaw_deg": 12.0,
+      "mass_kg": 0.8,
+      "minimum_xyz": [
+        -0.136252,
+        -0.132411,
+        -0.150227
+      ],
+      "maximum_xyz": [
+        0.136229,
+        0.176479,
+        0.150212
+      ],
+      "source_path": "/root/autodl-tmp/lingbot_semantic_nav/data/habitat_assets/versioned_data/replica_cad_dataset/objects/frl_apartment_basket.glb",
+      "prepared_usd": "/root/autodl-tmp/outputs/family_home_assets/dining_basket/dining_basket.usd"
+    },
+    {
+      "object_id": "dining_cup",
+      "source_name": "frl_apartment_cup_01.glb",
+      "evaluation_label": "cup",
+      "position_xy": [
+        1.78,
+        3.02
+      ],
+      "support_height_above_floor_m": 0.76,
+      "yaw_deg": 18.0,
+      "mass_kg": 0.5,
+      "minimum_xyz": [
+        -0.055642,
+        -0.03401,
+        -0.05558
+      ],
+      "maximum_xyz": [
+        0.077712,
+        0.04499,
+        0.055434
+      ],
+      "source_path": "/root/autodl-tmp/lingbot_semantic_nav/data/habitat_assets/versioned_data/replica_cad_dataset/objects/frl_apartment_cup_01.glb",
+      "prepared_usd": "/root/autodl-tmp/outputs/family_home_assets/dining_cup/dining_cup.usd"
+    },
+    {
+      "object_id": "dining_bowl",
+      "source_name": "frl_apartment_bowl_01.glb",
+      "evaluation_label": "bowl",
+      "position_xy": [
+        2.24,
+        3.04
+      ],
+      "support_height_above_floor_m": 0.76,
+      "yaw_deg": -12.0,
+      "mass_kg": 4.5,
+      "minimum_xyz": [
+        -0.126614,
+        -0.066286,
+        -0.126442
+      ],
+      "maximum_xyz": [
+        0.126686,
+        0.058214,
+        0.126058
+      ],
+      "source_path": "/root/autodl-tmp/lingbot_semantic_nav/data/habitat_assets/versioned_data/replica_cad_dataset/objects/frl_apartment_bowl_01.glb",
+      "prepared_usd": "/root/autodl-tmp/outputs/family_home_assets/dining_bowl/dining_bowl.usd"
+    },
+    {
+      "object_id": "bed_handbag",
+      "source_name": "frl_apartment_handbag.glb",
+      "evaluation_label": "handbag",
+      "position_xy": [
+        -2.92,
+        -2.18
+      ],
+      "support_height_above_floor_m": 0.55,
+      "yaw_deg": -20.0,
+      "mass_kg": 1.2,
+      "minimum_xyz": [
+        -0.1525,
+        -0.1278,
+        -0.0895
+      ],
+      "maximum_xyz": [
+        0.1643,
+        0.2696,
+        0.0871
+      ],
+      "source_path": "/root/autodl-tmp/lingbot_semantic_nav/data/habitat_assets/versioned_data/replica_cad_dataset/objects/frl_apartment_handbag.glb",
+      "prepared_usd": "/root/autodl-tmp/outputs/family_home_assets/bed_handbag/bed_handbag.usd"
+    },
+    {
+      "object_id": "media_book",
+      "source_name": "frl_apartment_book_01.glb",
+      "evaluation_label": "book",
+      "position_xy": [
+        -0.58,
+        3.64
+      ],
+      "support_height_above_floor_m": 0.82,
+      "yaw_deg": 8.0,
+      "mass_kg": 0.85,
+      "minimum_xyz": [
+        -0.074689,
+        -0.089731,
+        -0.013589
+      ],
+      "maximum_xyz": [
+        0.072413,
+        0.089675,
+        0.01347
+      ],
+      "source_path": "/root/autodl-tmp/lingbot_semantic_nav/data/habitat_assets/versioned_data/replica_cad_dataset/objects/frl_apartment_book_01.glb",
+      "prepared_usd": "/root/autodl-tmp/outputs/family_home_assets/media_book/media_book.usd"
+    },
+    {
+      "object_id": "media_remote",
+      "source_name": "frl_apartment_remote-control_01.glb",
+      "evaluation_label": "remote control",
+      "position_xy": [
+        0.18,
+        3.94
+      ],
+      "support_height_above_floor_m": 0.82,
+      "yaw_deg": 72.0,
+      "mass_kg": 0.1,
+      "minimum_xyz": [
+        -0.023261,
+        -0.006425,
+        -0.088677
+      ],
+      "maximum_xyz": [
+        0.023261,
+        0.006425,
+        0.088675
+      ],
+      "source_path": "/root/autodl-tmp/lingbot_semantic_nav/data/habitat_assets/versioned_data/replica_cad_dataset/objects/frl_apartment_remote-control_01.glb",
+      "prepared_usd": "/root/autodl-tmp/outputs/family_home_assets/media_remote/media_remote.usd"
+    },
+    {
+      "object_id": "kitchen_appliance",
+      "source_name": "frl_apartment_small_appliance_01.glb",
+      "evaluation_label": "small kitchen appliance",
+      "position_xy": [
+        3.57,
+        3.78
+      ],
+      "support_height_above_floor_m": 0.92,
+      "yaw_deg": 12.0,
+      "mass_kg": 2.0,
+      "minimum_xyz": [
+        -0.1068,
+        -0.1423,
+        -0.1576
+      ],
+      "maximum_xyz": [
+        0.1061,
+        0.2153,
+        0.2183
+      ],
+      "source_path": "/root/autodl-tmp/lingbot_semantic_nav/data/habitat_assets/versioned_data/replica_cad_dataset/objects/frl_apartment_small_appliance_01.glb",
+      "prepared_usd": "/root/autodl-tmp/outputs/family_home_assets/kitchen_appliance/kitchen_appliance.usd"
+    },
+    {
+      "object_id": "kitchen_knife_block",
+      "source_name": "frl_apartment_knifeblock.glb",
+      "evaluation_label": "knife block",
+      "position_xy": [
+        3.52,
+        4.08
+      ],
+      "support_height_above_floor_m": 0.92,
+      "yaw_deg": -8.0,
+      "mass_kg": 1.2,
+      "minimum_xyz": [
+        -0.0476,
+        -0.1266,
+        -0.0769
+      ],
+      "maximum_xyz": [
+        0.0473,
+        0.1735,
+        0.072
+      ],
+      "source_path": "/root/autodl-tmp/lingbot_semantic_nav/data/habitat_assets/versioned_data/replica_cad_dataset/objects/frl_apartment_knifeblock.glb",
+      "prepared_usd": "/root/autodl-tmp/outputs/family_home_assets/kitchen_knife_block/kitchen_knife_block.usd"
+    }
+  ]
+}

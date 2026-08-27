@@ -56,3 +56,30 @@
 /lingbot_semantic_nav/data/habitat/**/rgb/
 /lingbot_semantic_nav/data/habitat/**/depth/
 /lingbot_semantic_nav/third_party/
+
+# Project-local benchmark data, heavyweight assets, models, and system exports.
+# Keep source/configuration in Git; obtain these artifacts from their licensed
+# upstream sources or the documented download scripts.
+/data/
+/Experiment/.conda/
+/Experiment/data/
+/Experiment/baselines/
+/Experiment/benchmarks/
+/Experiment/runtime/
+/robot-pipeline/.conda/
+/robot-pipeline/Assets/
+/robot-pipeline/checkpoints/
+/robot-pipeline/outputs/
+/robot-pipeline/g1d-expert-MaChuanhao/g1d-expert/scene/assets/
+/robot-vla/checkpoints/
+/robot-vla/third_party/
+/robot-vla/training_data/
+/scene_asset/
+/system_offload/
+/third_party/
+/vedio/
+/g1d-expert-MaChuanhao/
+/unitree_sdk2/
+/vln_vla_expert_handoff_20260803.tar.gz
+/vln_vla_expert_handoff_20260803/
+/vln_vla_expert_handoff_20260803/scene/assets/

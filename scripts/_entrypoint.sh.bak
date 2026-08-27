@@ -1,0 +1,85 @@
+#!/bin/bash
+set -e
+
+# --- Ensure real Xorg (not Xvfb) is installed so Vulkan can present ---
+if ! dpkg -s xserver-xorg-core >/dev/null 2>&1; then
+    echo "[entrypoint] Installing xserver-xorg-core..."
+    apt-get update -qq
+    DEBIAN_FRONTEND=noninteractive apt-get install -y -qq xserver-xorg-core
+fi
+
+# --- NVIDIA Xorg config for headless (no physical display) GPU rendering ---
+XORG_CONF="/etc/X11/xorg.conf"
+if [ ! -f "$XORG_CONF" ]; then
+    cat > "$XORG_CONF" << 'XORGEOF'
+Section "ServerLayout"
+    Identifier     "Layout0"
+    Screen      0  "Screen0" 0 0
+EndSection
+
+Section "Files"
+    ModulePath "/usr/lib/x86_64-linux-gnu/nvidia/xorg"
+    ModulePath "/usr/lib/xorg/modules"
+EndSection
+
+Section "Device"
+    Identifier  "Card0"
+    Driver      "nvidia"
+    BusID       "PCI:1:0:0"
+    Option      "AllowEmptyInitialConfiguration" "True"
+EndSection
+
+Section "Screen"
+    Identifier "Screen0"
+    Device     "Card0"
+    SubSection "Display"
+        Depth     24
+        Modes     "1920x1080"
+    EndSubSection
+EndSection
+XORGEOF
+    echo "[entrypoint] Wrote $XORG_CONF"
+fi
+
+# --- Clean stale X lock files from unclean shutdowns ---
+rm -f /tmp/.X0-lock /tmp/.X1-lock /tmp/.X11-unix/X0 /tmp/.X11-unix/X1
+
+# --- VNC password ---
+x11vnc -storepasswd g1dview /tmp/isaac-vnc.pass
+
+# --- Start real Xorg server (with NVIDIA driver, supports Vulkan WSI) ---
+echo "[entrypoint] Starting Xorg :1 with NVIDIA driver..."
+Xorg :1 -ac -noreset +extension GLX +extension RENDER +extension RANDR \
+    -config "$XORG_CONF" \
+    >/tmp/xorg.log 2>&1 &
+XORG_PID=$!
+
+# Wait for Xorg to be ready
+for i in $(seq 1 20); do
+    if [ -S /tmp/.X11-unix/X1 ]; then
+        echo "[entrypoint] Xorg :1 ready after ${i}s"
+        break
+    fi
+    sleep 1
+done
+
+# --- VNC + noVNC ---
+x11vnc -display :1 -forever -shared -rfbauth /tmp/isaac-vnc.pass -rfbport 5901 >/tmp/x11vnc.log 2>&1 &
+websockify --web=/usr/share/novnc 6080 localhost:5901 >/tmp/novnc.log 2>&1 &
+
+export DISPLAY=:1
+
+# Pin OpenVLA sidecar to a different GPU than Isaac Sim (GPU 0)
+# to avoid CUDA OOM on the 24 GB RTX 4090
+export G1D_SIDECAR_CUDA_DEVICE=1
+
+# --- Launch Isaac Sim ---
+exec /isaac-sim/python.sh run_g1d_simple_room_vln.py \
+  --scene-profile family-home \
+  --output-dir /workspace/outputs/family_home_vln \
+  --map /workspace/outputs/family_home_vln/lingbot_map/map.yaml \
+  --places /workspace/outputs/family_home_vln/places_formal.json \
+  --objects /workspace/outputs/family_home_vln/objects_formal.json \
+  --dual-agent --family-task --openvla --execute-sim-pick \
+  --live-search-frames 12 --assisted-motion-scale 2.5 \
+  --interactive-port 6013 --interactive-host 0.0.0.0

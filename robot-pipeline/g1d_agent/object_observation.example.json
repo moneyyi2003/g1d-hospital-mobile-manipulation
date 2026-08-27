@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "activation": "contract_test_only",
+  "observation": {
+    "object_id": "red_cube_demo",
+    "source": "future_sam3_rgbd_or_sim_bridge",
+    "frame_id": "base_link",
+    "visible": true,
+    "detection_confidence": 0.95,
+    "stable_frames": 8,
+    "age_sec": 0.05,
+    "distance_m": 0.8,
+    "lateral_error_m": 0.02,
+    "yaw_error_rad": 0.04,
+    "pose_uncertainty_m": 0.03,
+    "camera_names": ["head_rgb", "right_wrist_rgb"],
+    "base_linear_velocity_mps": 0.0,
+    "base_angular_velocity_rps": 0.0,
+    "ik_feasible": true,
+    "collision_free": true
+  }
+}

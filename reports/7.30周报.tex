@@ -1,0 +1,207 @@
+\documentclass[aspectratio=169,11pt]{beamer}
+
+% 请在 Overleaf 中选择 XeLaTeX 编译器。
+\usepackage{ctex}
+\usepackage{graphicx}
+\usepackage{xcolor}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,positioning}
+
+\definecolor{navy}{HTML}{0B2A55}
+\definecolor{blue}{HTML}{1769AA}
+\definecolor{teal}{HTML}{008C95}
+\definecolor{orange}{HTML}{E66A00}
+\definecolor{lightblue}{HTML}{EEF5FC}
+\definecolor{lightorange}{HTML}{FFF3E8}
+\definecolor{bodygray}{HTML}{344054}
+
+\setbeamercolor{normal text}{fg=bodygray,bg=white}
+\setbeamercolor{frametitle}{fg=navy,bg=white}
+\setbeamercolor{structure}{fg=blue}
+\setbeamercolor{itemize item}{fg=blue}
+\setbeamercolor{itemize subitem}{fg=teal}
+\setbeamertemplate{navigation symbols}{}
+\setbeamertemplate{footline}{%
+  \hfill
+  \usebeamerfont{page number in head/foot}%
+  \usebeamercolor[fg]{page number in head/foot}%
+  \insertframenumber\hspace{0.7em}\vspace{0.45em}
+}
+\setbeamertemplate{frametitle}{%
+  \vspace{0.35em}
+  \insertframetitle
+  \par\vspace{-0.25em}
+  {\color{blue}\rule{\textwidth}{0.8pt}}
+}
+\setbeamertemplate{itemize item}{\raise0.15ex\hbox{\small$\blacktriangleright$}}
+\setbeamertemplate{itemize subitem}{\raise0.15ex\hbox{\scriptsize$\bullet$}}
+\setlength{\leftmargini}{1.5em}
+\setlength{\leftmarginii}{1.4em}
+
+\newcommand{\key}[1]{\textcolor{blue}{\textbf{#1}}}
+\newcommand{\warn}[1]{\textcolor{orange}{\textbf{#1}}}
+
+\begin{document}
+
+\begin{frame}{本周工作：搭建 G1-D 双脑协同 Agent}
+  \begin{columns}[T,onlytextwidth]
+    \begin{column}{0.55\textwidth}
+      \begin{itemize}
+        \setlength{\itemsep}{0.65em}
+        \item 新建 \key{g1d\_dual\_brain\_agent}，与原有 Agent 并行，保留已有 VLN 能力
+        \item 将长任务拆成五类技能：
+          \begin{itemize}
+            \item \texttt{NAVIGATE}、\texttt{SEARCH\_OBJECT}
+            \item \texttt{APPROACH\_AND\_ALIGN}
+            \item \texttt{MANIPULATE}、\texttt{VERIFY}
+          \end{itemize}
+        \item 实现 Executive 动态路由，根据任务状态在 VLN 与 VLA 技能之间切换
+        \item 加入共享对象记忆、执行器互斥控制和结构化失败恢复
+      \end{itemize}
+    \end{column}
+    \begin{column}{0.41\textwidth}
+      \begin{beamercolorbox}[rounded=true,sep=0.9em]{block body}
+        \centering
+        {\Large\color{navy}\textbf{当前完成边界}}\\[0.7em]
+        \raggedright
+        \textcolor{teal}{\textbf{已完成：}}
+        任务拆解、技能路由、共享记忆、控制仲裁和失败恢复。\\[0.8em]
+        \textcolor{orange}{\textbf{当前还未完成：}}
+        双臂抓取闭环、VLA 关节控制和真机操作验收。
+      \end{beamercolorbox}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+\begin{frame}{主要流程与设计思路}
+  \centering
+  \begin{tikzpicture}[
+    node distance=0.55cm,
+    box/.style={
+      draw=blue, rounded corners=2pt, fill=lightblue,
+      minimum height=0.9cm, text width=2.25cm,
+      align=center, font=\small\bfseries
+    },
+    op/.style={box,draw=orange,fill=lightorange},
+    arrow/.style={-{Latex[length=2.2mm]},thick,color=navy}
+  ]
+    \node[box] (nav) {区域导航\\NAVIGATE};
+    \node[box,right=of nav] (search) {实时找物\\SEARCH};
+    \node[box,right=of search] (align) {靠近与对齐\\ALIGN};
+    \node[op,right=of align] (manip) {局部操作\\MANIPULATE};
+    \node[box,right=of manip] (verify) {物理验证\\VERIFY};
+    \draw[arrow] (nav) -- (search);
+    \draw[arrow] (search) -- (align);
+    \draw[arrow] (align) -- (manip);
+    \draw[arrow] (manip) -- (verify);
+  \end{tikzpicture}
+
+  \vspace{0.9em}
+  \begin{columns}[T,onlytextwidth]
+    \begin{column}{0.49\textwidth}
+      \begin{beamercolorbox}[rounded=true,sep=0.75em]{block body}
+        \textbf{\color{navy}为什么采用“双脑解耦”}
+        \begin{itemize}
+          \setlength{\itemsep}{0.38em}
+          \item VLN 负责全局、长距离、地图约束下的移动
+          \item VLA 只负责目标附近的短时局部操作
+          \item 两者不联合训练，便于独立替换和调试
+          \item Executive 只做调度，不直接输出轮速或关节角
+        \end{itemize}
+      \end{beamercolorbox}
+    \end{column}
+    \begin{column}{0.49\textwidth}
+      \begin{beamercolorbox}[rounded=true,sep=0.75em]{block body}
+        \textbf{\color{navy}为什么增加共享记忆与安全门}
+        \begin{itemize}
+          \setlength{\itemsep}{0.38em}
+          \item 共享对象 ID、位姿、可见性、可达性和携带状态
+          \item 底盘、右臂、右手通过控制租约互斥
+          \item 按失败原因回到导航、搜索或重新对齐
+          \item 缺少 TF、碰撞风险或 VLA 时 \warn{fail-closed}
+        \end{itemize}
+      \end{beamercolorbox}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+\begin{frame}{Agent 如何实现两大脑切换}
+  \begin{columns}[T,onlytextwidth]
+    \begin{column}{0.47\textwidth}
+      \begin{beamercolorbox}[rounded=true,sep=0.75em]{block body}
+        \textbf{\color{navy}1. 状态驱动的技能选择}
+        \begin{itemize}
+          \setlength{\itemsep}{0.42em}
+          \item \texttt{planner.py} 将指令整理为 \texttt{Mission / TaskGoal}
+          \item \texttt{executive.py::\_select\_skill()} 每轮读取
+            \texttt{GoalProgress} 和对象观测新鲜度
+          \item 未到区域 $\rightarrow$ \texttt{NAVIGATE}
+          \item 观测缺失或过期 $\rightarrow$ \texttt{SEARCH\_OBJECT}
+          \item 未对齐 $\rightarrow$ \texttt{APPROACH\_ALIGN}
+          \item 已对齐 $\rightarrow$ \texttt{MANIPULATE}，之后
+            \texttt{VERIFY}
+        \end{itemize}
+      \end{beamercolorbox}
+    \end{column}
+    \begin{column}{0.49\textwidth}
+      \begin{beamercolorbox}[rounded=true,sep=0.75em]{block body}
+        \textbf{\color{navy}2. 按 SkillKind 分派后端}
+        \begin{itemize}
+          \setlength{\itemsep}{0.42em}
+          \item \texttt{SkillRegistry.resolve()} 找到当前技能执行器
+          \item \texttt{LegacyVlnSkillExecutor} 执行导航和预抓取停靠
+          \item \texttt{LegacyVlaSkillExecutor} 只接收
+            \texttt{MANIPULATE}
+          \item 技能结束后写回 \texttt{SkillResult} 与共享记忆，
+            Executive 再选择下一技能
+        \end{itemize}
+      \end{beamercolorbox}
+
+      \vspace{0.55em}
+      \begin{beamercolorbox}[rounded=true,sep=0.65em]{block body}
+        \small
+        \textbf{\color{orange}切换保护：}
+        \texttt{control.py} 在执行前申请底盘/右臂/右手租约，
+        执行后释放；租约冲突或丢失时直接阻塞。
+      \end{beamercolorbox}
+    \end{column}
+  \end{columns}
+
+  \vspace{0.55em}
+  \centering
+  \textcolor{teal}{\textbf{实现上不是固定的 VLN/VLA 开关，而是
+  “状态判断 $\rightarrow$ 技能分派 $\rightarrow$ 结果回写”的循环。}}
+\end{frame}
+
+% 图片与本 tex 文件放在 Overleaf 同一目录。
+\begin{frame}[plain]
+  \centering
+  \includegraphics[width=\paperwidth,height=\paperheight,keepaspectratio]{dual-agent.png}
+\end{frame}
+
+\begin{frame}{下周任务：先验证 OpenVLA，再等待双臂模型}
+  \begin{enumerate}
+    \setlength{\itemsep}{0.8em}
+    \item \key{接入一个简单的 OpenVLA 后端}
+      \begin{itemize}
+        \item 输入当前头部或腕部 RGB 与简短英文操作指令
+        \item 先跑通单次推理，记录输出格式、延迟和显存占用
+      \end{itemize}
+    \item \key{完成安全的动作适配实验}
+      \begin{itemize}
+        \item 将 OpenVLA 输出作为末端增量进行诊断
+        \item 不直接映射为 G1-D 关节角；执行前保留 IK、碰撞和限位检查
+      \end{itemize}
+    \item \key{在 Isaac Sim 做最小闭环观察效果}
+      \begin{itemize}
+        \item 选择单一物体和简单动作，验证“对齐—推理—动作—验证”链路
+        \item 对失败案例保留图像、动作与结构化失败原因
+      \end{itemize}
+    \item \warn{双臂 VLA 训练完成后再正式接入}
+      \begin{itemize}
+        \item 替换临时 OpenVLA backend，补齐双臂动作空间、时序同步与独立验证
+      \end{itemize}
+  \end{enumerate}
+\end{frame}
+
+\end{document}

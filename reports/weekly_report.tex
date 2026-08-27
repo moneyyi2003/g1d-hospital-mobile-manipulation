@@ -1,0 +1,275 @@
+\documentclass[aspectratio=169,10pt]{ctexbeamer}
+
+\usetheme{Madrid}
+\usecolortheme{default}
+\usepackage{tikz}
+\usepackage{booktabs}
+\usepackage{amsmath}
+\usetikzlibrary{arrows.meta,positioning,shapes.geometric}
+
+\definecolor{MainBlue}{RGB}{32,78,121}
+\definecolor{AccentBlue}{RGB}{68,142,196}
+\definecolor{LightBlue}{RGB}{231,241,250}
+\definecolor{AccentGreen}{RGB}{62,142,65}
+\definecolor{AccentOrange}{RGB}{230,126,34}
+\definecolor{SoftGray}{RGB}{245,246,248}
+\definecolor{DarkGray}{RGB}{55,60,66}
+
+\setbeamercolor{structure}{fg=MainBlue}
+\setbeamercolor{title}{fg=white,bg=MainBlue}
+\setbeamercolor{frametitle}{fg=white,bg=MainBlue}
+\setbeamercolor{block title}{fg=white,bg=AccentBlue}
+\setbeamercolor{block body}{fg=DarkGray,bg=LightBlue}
+\setbeamercolor{alerted text}{fg=AccentOrange}
+\setbeamertemplate{navigation symbols}{}
+\setbeamertemplate{footline}{
+  \leavevmode%
+  \hbox{%
+    \begin{beamercolorbox}[wd=.82\paperwidth,ht=2.5ex,dp=1ex,leftskip=1em]{author in head/foot}%
+      周工作汇报：感知、导航与 VLA 接轨
+    \end{beamercolorbox}%
+    \begin{beamercolorbox}[wd=.18\paperwidth,ht=2.5ex,dp=1ex,center]{date in head/foot}%
+      \insertframenumber/\inserttotalframenumber
+    \end{beamercolorbox}%
+  }
+}
+
+\tikzset{
+  stage/.style={
+    draw=MainBlue, very thick, rounded corners=3pt,
+    fill=LightBlue, minimum width=2.5cm, minimum height=1.0cm,
+    align=center, font=\small
+  },
+  done/.style={
+    stage, draw=AccentGreen, fill=green!8
+  },
+  future/.style={
+    stage, draw=AccentOrange, fill=orange!9
+  },
+  flow/.style={
+    -{Latex[length=3mm]}, very thick, draw=DarkGray
+  }
+}
+
+\title{面向移动操作的感知与导航进展}
+\subtitle{SAM 3 替换、MobileManiBench 导航验证与 VLA 接轨思路}
+\author{汇报人：\underline{\hspace{3cm}}}
+\institute{\underline{\hspace{4cm}}}
+\date{\today}
+
+\begin{document}
+
+\begin{frame}[plain]
+  \titlepage
+  \vspace{-0.6cm}
+  \begin{center}
+    \small 本周关键词：\textbf{感知模型升级} \quad
+    \textbf{仿真导航验证} \quad
+    \textbf{精确停靠问题}
+  \end{center}
+\end{frame}
+
+\begin{frame}{本周工作概览}
+  \begin{center}
+    \begin{tikzpicture}[node distance=0.75cm]
+      \node[done] (perception) {\textbf{感知升级}\\SAM 2 + OWLv2\\$\Downarrow$\\SAM 3};
+      \node[done, right=of perception] (dataset) {\textbf{数据与平台}\\定位并整理\\MobileManiBench};
+      \node[done, right=of dataset] (navigation) {\textbf{导航测试}\\Isaac Sim +\\宇树机器人};
+      \node[future, right=of navigation] (vla) {\textbf{下一阶段}\\导航与 VLA\\形成闭环};
+      \draw[flow] (perception) -- (dataset);
+      \draw[flow] (dataset) -- (navigation);
+      \draw[flow] (navigation) -- (vla);
+    \end{tikzpicture}
+  \end{center}
+
+  \vspace{0.5cm}
+  \begin{block}{阶段性目标}
+    从“能够感知、能够导航”推进到“\alert{能够到达合适操作位姿，并完成简单操作}”。
+  \end{block}
+\end{frame}
+
+\begin{frame}{工作一：用 SAM 3 替换 SAM 2 + OWLv2}
+  \begin{columns}[T,onlytextwidth]
+    \column{0.47\textwidth}
+      \begin{block}{原有感知链路}
+        \centering
+        文本提示 $\rightarrow$ OWLv2 检测\\[0.15cm]
+        检测框 $\rightarrow$ SAM 2 分割
+      \end{block}
+      \begin{itemize}
+        \item 两个模型串联，接口与部署链路较长
+        \item 检测误差会继续传递到分割阶段
+        \item 推理与维护成本相对较高
+      \end{itemize}
+
+    \column{0.06\textwidth}
+      \vspace{1.5cm}
+      \centering
+      {\Large $\Longrightarrow$}
+
+    \column{0.47\textwidth}
+      \begin{block}{当前方案}
+        \centering
+        图像 + 提示 $\rightarrow$ SAM 3\\[0.15cm]
+        统一输出目标区域
+      \end{block}
+      \begin{itemize}
+        \item 简化开放词汇目标定位与分割流程
+        \item 减少模块间数据转换与误差累积
+        \item 为后续目标级导航、操作提供统一掩码
+      \end{itemize}
+  \end{columns}
+
+  \vspace{0.25cm}
+  \begin{alertblock}{仍需量化}
+    下一步用统一测试集比较成功率、误检漏检、推理时延和显存占用。
+  \end{alertblock}
+\end{frame}
+
+\begin{frame}{工作二：MobileManiBench 与 Isaac Sim 导航测试}
+  \begin{columns}[T,onlytextwidth]
+    \column{0.55\textwidth}
+      \begin{block}{已完成}
+        \begin{itemize}
+          \item 找到并整理 MobileManiBench 数据与任务资源
+          \item 在 NVIDIA Isaac Sim 中搭建仿真测试链路
+          \item 加载宇树机器人，在场景内运行语言目标导航
+          \item 验证“目标解析—路径规划—路径跟随”的基本流程
+        \end{itemize}
+      \end{block}
+
+    \column{0.41\textwidth}
+      \begin{block}{当前结论}
+        高层导航链路已经跑通，可作为后续移动操作的基础。
+      \end{block}
+      \begin{alertblock}{边界条件}
+        当前结果主要说明仿真中的导航流程可运行；真实轮地接触控制、复杂场景鲁棒性仍需继续验证。
+      \end{alertblock}
+  \end{columns}
+\end{frame}
+
+\begin{frame}{核心问题：VLA 为什么需要“精确停靠”？}
+  \begin{columns}[T,onlytextwidth]
+    \column{0.46\textwidth}
+      \begin{block}{OpenVLA 的现实约束}
+        \begin{itemize}
+          \item 对视角、距离和目标尺度较敏感
+          \item 超出训练分布后，动作成功率明显下降
+          \item 机械臂工作空间有限，导航误差会直接变成操作失败
+        \end{itemize}
+      \end{block}
+
+    \column{0.50\textwidth}
+      \begin{center}
+        \begin{tikzpicture}[scale=0.82, every node/.style={transform shape}]
+          \fill[gray!15] (-0.3,-0.3) rectangle (6.2,4.0);
+          \node[draw, fill=brown!25, minimum width=1.7cm,
+                minimum height=0.9cm] (obj) at (4.8,2.1) {目标物体};
+          \draw[AccentGreen, very thick, dashed] (4.8,2.1) circle (1.35cm);
+          \node[AccentGreen] at (4.8,3.7) {可操作区域};
+          \node[draw=MainBlue, fill=LightBlue, rounded corners,
+                minimum width=1.2cm, minimum height=0.8cm] (robot) at (1.0,0.7) {机器人};
+          \draw[flow] (robot) to[bend left=18]
+            node[below, sloped, font=\small] {导航到预操作位姿} (3.7,1.5);
+          \fill[AccentOrange] (3.55,1.5) circle (0.10);
+          \draw[AccentOrange, very thick, ->] (3.55,1.5) -- (4.35,1.9);
+          \node[font=\scriptsize, align=center] at (2.9,2.6)
+            {不仅要“到物体附近”\\还要满足位置和朝向};
+        \end{tikzpicture}
+      \end{center}
+  \end{columns}
+
+  \begin{alertblock}{问题转化}
+    将语义目标“去桌子/方块旁边”转化为满足操作约束的
+    \textbf{SE(2) 预操作位姿} $(x,y,\theta)$。
+  \end{alertblock}
+\end{frame}
+
+\begin{frame}{解决思路：粗导航 + 精确停靠 + VLA 门控}
+  \begin{center}
+    \begin{tikzpicture}[node distance=0.55cm]
+      \node[stage] (detect) {\textbf{目标感知}\\掩码/位姿};
+      \node[stage, right=of detect] (goal) {\textbf{候选生成}\\距离+朝向};
+      \node[stage, right=of goal] (nav) {\textbf{全局导航}\\到目标附近};
+      \node[stage, right=of nav] (servo) {\textbf{视觉伺服}\\精确对齐};
+      \node[future, right=of servo] (vla) {\textbf{VLA 执行}\\抓取/放置};
+      \draw[flow] (detect) -- (goal);
+      \draw[flow] (goal) -- (nav);
+      \draw[flow] (nav) -- (servo);
+      \draw[flow] (servo) -- (vla);
+    \end{tikzpicture}
+  \end{center}
+
+  \vspace{0.45cm}
+  \begin{columns}[T,onlytextwidth]
+    \column{0.48\textwidth}
+      \begin{block}{预操作位姿生成}
+        \[
+          \mathbf{p}_{dock}
+          = \mathbf{p}_{obj} - d
+          \begin{bmatrix}\cos\theta\\ \sin\theta\end{bmatrix}
+        \]
+        根据物体位置、可操作方向和机械臂工作距离 $d$ 生成多个候选；
+        再检查碰撞、可达性、净空和最终朝向。
+      \end{block}
+
+    \column{0.48\textwidth}
+      \begin{block}{执行门控与纠偏}
+        \begin{itemize}
+          \item 全局规划负责“到附近”
+          \item 目标跟踪/视觉伺服负责厘米级相对对齐
+          \item 仅当距离、角度和可见性同时达标时启动 VLA
+          \item 不达标则重新定位或切换候选位姿
+        \end{itemize}
+      \end{block}
+  \end{columns}
+\end{frame}
+
+\begin{frame}{下一步计划与验收指标}
+  \begin{columns}[T,onlytextwidth]
+    \column{0.56\textwidth}
+      \begin{enumerate}
+        \item 构建目标物体的 6D 位姿/交互面估计
+        \item 生成并排序多个预操作停靠候选
+        \item 完成全局导航与近距离视觉伺服衔接
+        \item 接入 OpenVLA，先验证简单抓取或按钮操作
+        \item 建立失败恢复：重定位、换视角、换候选
+      \end{enumerate}
+
+    \column{0.40\textwidth}
+      \begin{block}{建议验收指标}
+        \begin{tabular}{@{}ll@{}}
+          \toprule
+          指标 & 初步目标 \\
+          \midrule
+          停靠位置误差 & $\leq 5$ cm \\
+          停靠朝向误差 & $\leq 5^\circ$ \\
+          目标持续可见 & $\geq 95\%$ \\
+          操作成功率 & 多次重复统计 \\
+          \bottomrule
+        \end{tabular}
+      \end{block}
+  \end{columns}
+
+  \vspace{0.35cm}
+  \begin{alertblock}{近期最小闭环}
+    选择一个固定物体，完成
+    \textbf{检测 $\rightarrow$ 导航 $\rightarrow$ 精确停靠 $\rightarrow$ VLA 简单操作}
+    的单任务验证，再逐步扩展物体和场景。
+  \end{alertblock}
+\end{frame}
+
+\begin{frame}[plain]
+  \begin{center}
+    \vspace{1.3cm}
+    {\usebeamercolor[fg]{structure}\LARGE\bfseries 总结}\\[0.8cm]
+    {\large
+      本周完成了感知方案升级和仿真导航链路验证；\\[0.35cm]
+      下一阶段的关键不是“导航到目标附近”，\\[0.2cm]
+      而是\alert{\textbf{生成并到达满足 VLA 操作条件的精确预操作位姿}}。
+    }\\[1.2cm]
+    {\Large 谢谢！}
+  \end{center}
+\end{frame}
+
+\end{document}

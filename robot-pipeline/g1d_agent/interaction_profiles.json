@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "profiles": [
+    {
+      "id": "red_cube_demo_pick_v1",
+      "object_id": "red_cube_demo",
+      "name": "红色方块",
+      "aliases": ["红方块", "方块", "小方块", "red cube", "cube"],
+      "skill": "pick",
+      "preferred_hand": "right",
+      "allowed_environments": ["isaac_sim"],
+      "calibration_status": "provisional",
+      "base_staging": {
+        "frame_id": "base_link",
+        "distance_reference": "base_center_to_object_center",
+        "preferred_distance_m": 0.8,
+        "minimum_distance_m": 0.65,
+        "maximum_distance_m": 0.9,
+        "maximum_yaw_error_rad": 0.15,
+        "maximum_lateral_error_m": 0.1
+      },
+      "perception": {
+        "required_cameras": ["head_rgb", "right_wrist_rgb"],
+        "minimum_detection_confidence": 0.8,
+        "minimum_stable_frames": 5,
+        "maximum_pose_uncertainty_m": 0.08,
+        "maximum_observation_age_sec": 0.2
+      },
+      "safety": {
+        "maximum_base_linear_velocity_mps": 0.01,
+        "maximum_base_angular_velocity_rps": 0.02
+      },
+      "success": {
+        "type": "lift_and_hold",
+        "minimum_lift_height_m": 0.05,
+        "minimum_hold_frames": 30
+      },
+      "notes": "距离区间尚未经过右臂 IK/VLA 实测；只作为 Isaac 接口联调初值。"
+    }
+  ]
+}

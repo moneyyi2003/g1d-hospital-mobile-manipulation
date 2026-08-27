@@ -1,0 +1,9 @@
+.env
+outputs/family_home_web/live/
+outputs/family_home_web/isaac.log
+outputs/family_home_vln/live/
+outputs/family_home_vln/openvla/
+outputs/family_home_vln/dual_agent_run_summary.json
+outputs/family_home_vln/dual_agent_world_memory.json
+__pycache__/
+*.pyc

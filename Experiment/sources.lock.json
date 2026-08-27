@@ -1,0 +1,31 @@
+{
+  "benchmarks": {
+    "hm3d-ovon": {
+      "url": "https://github.com/naokiyokoyama/ovon.git",
+      "commit": "8300fcc9fcd820637ac202cb43db080229f53410"
+    },
+    "goat-bench": {
+      "url": "https://github.com/Ram81/goat-bench.git",
+      "commit": "74c41d19d4a4c3608d1575b512087b5a529aee0d"
+    }
+  },
+  "baselines": {
+    "vlfm": {
+      "url": "https://github.com/rai-opensource/vlfm.git",
+      "commit": "584ed56"
+    },
+    "openfmnav": {
+      "url": "https://github.com/yxKryptonite/OpenFMNav.git",
+      "commit": "5b7de07"
+    },
+    "vlmnav": {
+      "url": "https://github.com/Jirl-upenn/VLMnav.git",
+      "commit": "82d5968"
+    },
+    "modular-goat": {
+      "url": "https://github.com/Ram81/goat-bench.git",
+      "commit": "74c41d19d4a4c3608d1575b512087b5a529aee0d",
+      "location": "baselines/modular-goat"
+    }
+  }
+}

@@ -1,0 +1,100 @@
+{
+  "schema_version": 1,
+  "artifact_type": "g1d_right_arm_position_ik_probe",
+  "success": true,
+  "simulation_only": true,
+  "controller": "damped_least_squares_position_ik",
+  "joint_order": [
+    "right_shoulder_pitch_joint",
+    "right_shoulder_roll_joint",
+    "right_shoulder_yaw_joint",
+    "right_elbow_joint",
+    "right_wrist_roll_joint",
+    "right_wrist_pitch_joint",
+    "right_wrist_yaw_joint"
+  ],
+  "jacobian_shape": [
+    41,
+    6,
+    40
+  ],
+  "start_palm_world_m": [
+    -0.14698684215545654,
+    -0.08037228882312775,
+    -0.001923970878124237
+  ],
+  "target_palm_world_m": [
+    -0.08698684215545655,
+    -0.08037228882312775,
+    0.048076029121875766
+  ],
+  "final_palm_world_m": [
+    -0.09661043435335159,
+    -0.08570443838834763,
+    0.03285461664199829
+  ],
+  "target_offset_world_m": [
+    0.06,
+    0.0,
+    0.05
+  ],
+  "final_position_error_m": 0.018781287060790873,
+  "start_joint_position_rad": [
+    0.41734838485717773,
+    0.03334103152155876,
+    -0.911754310131073,
+    1.8135589361190796,
+    -0.5876229405403137,
+    0.19040237367153168,
+    -0.3145056664943695
+  ],
+  "final_joint_position_rad": [
+    0.5443406105041504,
+    0.02853754349052906,
+    -0.8711637854576111,
+    1.7224812507629395,
+    -0.5443444848060608,
+    0.1298854947090149,
+    -0.2517898976802826
+  ],
+  "maximum_joint_delta_rad": 0.12699222564697266,
+  "iterations": 15,
+  "minimum_iteration_error_m": 0.01196504049626733,
+  "joint_limits_rad": [
+    [
+      -3.0892,
+      2.6704
+    ],
+    [
+      -2.2515,
+      1.5882
+    ],
+    [
+      -2.618,
+      2.618
+    ],
+    [
+      -1.0472,
+      2.0944
+    ],
+    [
+      -1.972222054,
+      1.972222054
+    ],
+    [
+      -1.614429558,
+      1.614429558
+    ],
+    [
+      -1.614429558,
+      1.614429558
+    ]
+  ],
+  "safety": {
+    "maximum_requested_cartesian_offset_m": 0.1,
+    "maximum_per_iteration_joint_delta_rad": 0.035,
+    "collision_checked": false,
+    "object_contact": false,
+    "hardware_output": false
+  }
+}

@@ -1,15 +1,20 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-WORKSPACE_DIR="/root/autodl-tmp"
-PROJECT_DIR="${WORKSPACE_DIR}/MobileManiBench"
-ENV_DIR="${WORKSPACE_DIR}/envs/mobilemanibench"
-LINGBOT_ENV_DIR="${WORKSPACE_DIR}/envs/lingbot-map"
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+# The project is relocatable.  Override these only when environments live in a
+# shared external workspace; the Web dashboard itself needs neither one.
+WORKSPACE_DIR="${MOBILEMANIBENCH_WORKSPACE_DIR:-${SCRIPT_DIR}}"
+PROJECT_DIR="${WORKSPACE_DIR}"
+ENV_DIR="${MOBILEMANIBENCH_ENV_DIR:-${WORKSPACE_DIR}/envs/mobilemanibench}"
+LINGBOT_ENV_DIR="${LINGBOT_ENV_DIR:-${WORKSPACE_DIR}/envs/lingbot-map}"
 
-if [[ ! -x "${ENV_DIR}/bin/python" ]]; then
-    echo "MobileManiBench environment is missing: ${ENV_DIR}" >&2
-    exit 1
-fi
+require_mobilemanibench_env() {
+    if [[ ! -x "${ENV_DIR}/bin/python" ]]; then
+        echo "MobileManiBench environment is missing: ${ENV_DIR}" >&2
+        exit 1
+    fi
+}
 
 export OMNI_KIT_ACCEPT_EULA=YES
 export PIP_CACHE_DIR="${WORKSPACE_DIR}/.cache/pip"
@@ -24,15 +29,18 @@ fi
 
 case "${command_name}" in
     isaacsim)
+        require_mobilemanibench_env
         exec "${ENV_DIR}/bin/isaacsim" isaacsim.exp.full "$@"
         ;;
     smoke)
+        require_mobilemanibench_env
         exec "${ENV_DIR}/bin/python" unimanip/rsl_ppo/smoke_env.py \
             --task Isaac-G1-Robot-Direct-v0 \
             --config train_g1_robot_open_best_0.yaml \
             --type ycb --group ycb --index 0 --num_envs 1 "$@"
         ;;
     g1-d-smoke)
+        require_mobilemanibench_env
         exec "${ENV_DIR}/bin/python" scripts/g1_d_smoke.py \
             --usd "${WORKSPACE_DIR}/Assets/g1_d/g1_d.usd" "$@"
         ;;
@@ -46,6 +54,7 @@ case "${command_name}" in
             --output-dir "${WORKSPACE_DIR}/outputs/g1d_arm_probe" "$@"
         ;;
     vln)
+        require_mobilemanibench_env
         exec "${ENV_DIR}/bin/python" scripts/g1_d_vln.py \
             --usd "${WORKSPACE_DIR}/Assets/g1_d/g1_d.usd" "$@"
         ;;
